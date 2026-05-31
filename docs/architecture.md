@@ -457,7 +457,10 @@ Design points:
   mobile app" line prepended to the body, and/or a dedicated custom field on the
   note object holding the app user's identifier. Decide which with the SF team.
   Be deliberate about *which* identifier is written (avoid leaking unnecessary
-  PII into the note body).
+  PII into the note body). **New org:** workers have no Salesforce `User`, so the
+  author stamp must be a **Resource External Id / employee key**, not a `User`
+  lookup. Note `Person_Administering__c → sked__Resource__c` still lets
+  medication records reference the real worker (§11.6).
 - **Input validation.** Treat note `body` as untrusted user input: enforce a
   length cap and strip/escape anything problematic before it reaches Salesforce.
 - **Outbox can't be spoofed.** RLS forces `author_id = auth.uid()` and
@@ -493,11 +496,12 @@ Design points:
    (Skedulo), with `sked__Job_Allocation__c` as the worker↔job join.
 2. ~~What field designates the assignee/owner?~~ **Resolved (§11):** the worker
    is `sked__Resource__c`, linked via `sked__Job_Allocation__c` — *not* a field
-   on the Job. Per-user key becomes `profiles.salesforce_resource_id`. Still to
-   confirm: the `sked__Resource__c → User` link field (§11.5).
-3. **How are app users onboarded** — self-signup, admin invite, SSO? Affects how
-   `profiles.salesforce_resource_id` gets populated reliably from the worker's
-   `sked__Resource__c`.
+   on the Job. **New org:** workers have no `User`, so map on a Resource External
+   Id, not `sked__User__c` (§11.6).
+3. **New-org provisioning** — workers have no Salesforce login, so how is each
+   worker's `sked__Resource__c` External Id created and pushed onto their
+   Supabase `profiles` row at onboarding (admin invite, HR feed, SSO claim)?
+   This gates the per-user authz model (§5.2, §11.6).
 4. **Freshness SLA** — how stale can jobs be? Confirms polling interval vs. need
    for CDC (§4).
 5. **Volume** — how many jobs / users / change rate / note rate? Influences Edge
@@ -611,11 +615,17 @@ over the Supabase copy.
 
 ## 11. Concrete Salesforce mapping (verified against UAT)
 
-Inspected in the **UAT sandbox** (`CareChoice`, instance `AUS24S`,
-`IsSandbox = true`) — read-only, no personal records queried. This grounds the
-placeholders in §3 / §5 with the org's actual objects. The org runs two managed
-packages: **Skedulo** (`sked__`, `skedhealthcare__`) for scheduling/jobs and a
-care-management package (`enrtcr__`) for clients, notes, and medications.
+> **Scope note.** This was inspected in the **current** UAT sandbox
+> (`CareChoice`, instance `AUS24S`, `IsSandbox = true`) — read-only, no personal
+> records queried. In the **current** org, support workers *do* have Salesforce
+> `User` records (Skedulo resources link to them via `sked__User__c`). The app
+> targets a **new org** where **support workers will have no Salesforce login**
+> — the integration-user model this doc is built around. So treat the object
+> model below as the **reference data model** (the same Skedulo + `enrtcr__`
+> packages are expected to carry over), but **re-verify against the new org**,
+> and apply the new-org adjustments in §11.6. The packages here are **Skedulo**
+> (`sked__`, `skedhealthcare__`) for scheduling/jobs and a care-management
+> package (`enrtcr__`) for clients, notes, and medications.
 
 ### 11.1 Object map
 
@@ -715,6 +725,45 @@ sked__Job__c`, `enrtcr__Client__c → Contact`, optionally `enrtcr__Medication__
 - **`sked__UniqueKey__c` — confirmed** `Text(255)` Unique (case-insensitive),
   **not** an External Id. Use it as the Supabase-side upsert key for allocations.
 
-Still open: whether each worker has a login-less `User` linked via
-`sked__User__c` (drives the onboarding mapping — OQ #3), and the SF API/CDC/
-Agentforce allocations (OQ #10–#11).
+Still open: the SF API/CDC/Agentforce allocations (OQ #10–#11) and the new-org
+provisioning model (§11.6).
+
+### 11.6 New-org adjustments (support workers have **no** Salesforce login)
+
+The new org is the target environment and is **green-field** — so we design in
+the affordances the current org lacks instead of working around them.
+
+**1. Identity is fully decoupled.** Supabase Auth is the *only* identity for
+workers; there is **no per-worker Salesforce `User`**. The single SF login is
+the **integration user** used by the sync service. So the current org's mapping
+anchor (`sked__Resource__c.sked__User__c → User`) **does not apply** — there is
+no User to match on.
+
+**2. Map on a non-User key.** The per-user link (§5.2, §11.2) must use a stable
+identifier that lives on `sked__Resource__c` (or its `Contact`) and can be
+provisioned onto the Supabase profile at signup — recommend a dedicated
+**External Id text field on `sked__Resource__c`** (e.g. an employee number).
+Then `profiles.salesforce_resource_key` ↔ `sked__Resource__c.<External_Id>`.
+
+**3. Worker-reference fields still work; User-reference fields don't.** Good
+news: `Person_Administering__c → sked__Resource__c` points at the **Resource**,
+not a User — so we can still stamp *which worker* administered, without them
+having a login. Only `OwnerId` / `CreatedById` collapse onto the integration
+user (expected — that's the attribution caveat in §6).
+
+**4. Add green-field affordances (since it's a new org):**
+- **External Id on write-back objects** (`enrtcr__Note__c`,
+  `enrtcr__Medication_Administered__c`) — e.g. `Mobile_Outbox_Id__c` (External
+  Id, Unique) holding the outbox row UUID. This upgrades write-back from
+  *check-before-create* to a clean **idempotent upsert**, eliminating the
+  duplicate-administration risk (§5.4) at the platform level.
+- **Attribution field** — a "Submitted via mobile by" field on those objects
+  holding the worker's Resource External Id, so authorship survives even though
+  the record is owned by the integration user (§6).
+- Confirm **CDC and Agentforce** are enabled when provisioning the new org
+  (§4.1, §10), rather than retrofitting.
+
+**5. Re-verify the model.** Object/field API names should carry over with the
+same packages, but external-id fields, picklist values, and whether `Resource`
+even has a `User` link may differ — re-run the §11 inspection against the new
+org once it exists.
