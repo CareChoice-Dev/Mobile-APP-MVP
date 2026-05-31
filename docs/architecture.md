@@ -17,46 +17,63 @@
 | G3 | Users have **no** dedicated Salesforce access | App must never talk to Salesforce; a server-side **integration user** does |
 | G4 | Each user sees only the jobs **assigned/owned by them** | Per-row authorization via **Postgres Row-Level Security (RLS)** |
 | G5 | React Native client | `@supabase/supabase-js`, recommended via Expo |
+| G6 | Users **write data back** to Salesforce (e.g. a case note attached to a job) | A **write-back path** Supabase → Salesforce, performed by the integration user via an **outbox** |
 
 ### The driving insight
 
 Because users have no Salesforce identity, the app **cannot** call Salesforce
-directly:
+directly — in either direction:
 
 - Embedding the integration user's credentials in the app would leak a
   highly-privileged secret to every device — unacceptable.
-- There is no per-user Salesforce session to scope a live query with.
+- There is no per-user Salesforce session to scope a query or a write with.
 
-Therefore the design is a **one-way sync pipeline** (Salesforce → Supabase),
-**not** a live proxy. The app's entire backend is Supabase. Salesforce is
-invisible to the client.
+Therefore the app's entire backend is **Supabase**, and **all** Salesforce
+traffic flows through the server-side sync service running as the integration
+user. The system is **bidirectional**:
+
+- **Reads** — Salesforce → Supabase (mirror), served to the app from Supabase.
+- **Writes** — app → Supabase (an **outbox** table) → Salesforce, pushed by the
+  integration user.
+
+Salesforce remains invisible to the client; the app only ever sees Supabase.
+
+> **Attribution caveat (important):** because the integration user performs the
+> write, a case note created in Salesforce will, by default, show the
+> *integration user* as its author — not the real app user. We must explicitly
+> preserve the true author (a stamped field and/or a line in the note body).
+> See §6.
 
 ---
 
 ## 2. High-level architecture
 
 ```
+                         READ PATH  (Salesforce → app)
 ┌──────────────┐      ┌───────────────────────────┐      ┌─────────────────────┐      ┌──────────────────┐
 │  Salesforce  │      │  Sync service             │      │  Supabase           │      │  React Native    │
-│              │      │  (runs as integration     │      │  (Postgres + Auth   │      │  app (Expo)      │
-│  Job records │─────▶│   user, server-side only) │─────▶│   + RLS + Realtime) │◀────▶│                  │
-│              │ JWT  │                           │ svc  │                     │ anon │  End users       │
-│              │ OAuth│  - polls / receives CDC   │ role │  jobs table + RLS   │ key  │                  │
+│              │─────▶│  (runs as integration     │─────▶│  (Postgres + Auth   │─────▶│  app (Expo)      │
+│  Job records │ pull │   user, server-side only) │upsert│   + RLS + Realtime) │ read │                  │
+│              │      │                           │      │  jobs table + RLS   │      │  End users       │
+│  Case notes  │◀─────│  - polls / receives CDC   │◀─────│  job_notes (outbox) │◀─────│                  │
+│              │create │  - drains outbox          │claim │  + RLS              │insert│                  │
 └──────────────┘      └───────────────────────────┘      └─────────────────────┘      └──────────────────┘
-       ▲                          │                                                            │
-       │   integration user        │  upsert by salesforce_id                                   │  login + read
-       └──────── secret ───────────┘                                                            └─ assigned jobs only
-            (private key, never on device)
+       ▲                          │     WRITE PATH  (app → Salesforce)                          │
+       │   integration user        │  upsert by salesforce_id (read) / create note (write)      │  login,
+       └──────── secret ───────────┘                                                            └─ read + add notes
+            (private key, never on device)                                                        (own jobs only)
 ```
 
 **Trust boundaries**
 
 1. **Salesforce ↔ Sync service** — authenticated as the integration user.
-   Credentials live only on the server.
+   Credentials live only on the server. Reads job records; creates case notes.
 2. **Sync service ↔ Supabase** — uses the Supabase **service-role key**
-   (bypasses RLS, write path only). Server-side only.
+   (bypasses RLS). Server-side only. Writes mirrored jobs; drains the note
+   outbox.
 3. **App ↔ Supabase** — uses the Supabase **anon key** + a user JWT. RLS is
-   the *only* thing enforcing that a user sees only their own jobs.
+   the *only* thing enforcing that a user reads only their own jobs and can add
+   notes only to those jobs.
 
 ---
 
@@ -69,15 +86,23 @@ invisible to the client.
 - Each job has an **owner/assignee** field. The value that links a job to an
   app user must be something we can also resolve on the Supabase side
   (see §5, "the mapping problem").
+- **Case notes** are written to a note/child object related to the job. The
+  exact object depends on the org — candidates: `ContentNote` + `ContentDocumentLink`,
+  a `Task`, a Chatter `FeedItem`, `CaseComment` (if jobs are Cases), or a custom
+  notes object. **To be confirmed** (see §8). The integration user needs
+  **create** permission on whichever object is chosen.
 
 ### 3.2 Sync service (the integration layer)
 
 Responsibilities:
 
 - Authenticate to Salesforce as the integration user.
-- Pull changed job records.
-- Upsert them into Supabase `jobs`, keyed by Salesforce record Id (idempotent).
-- Record sync state (last successful sync timestamp / replay id).
+- **Read path:** pull changed job records; upsert them into Supabase `jobs`,
+  keyed by Salesforce record Id (idempotent); record sync state.
+- **Write path:** drain the `job_notes` outbox — claim `pending` notes, create
+  the corresponding note record in Salesforce (stamping the true author), store
+  the returned Salesforce Id back on the row, and mark it `synced` (or `error`
+  with a retry count). See §5.4.
 
 **Authentication to Salesforce — OAuth 2.0 JWT Bearer flow**
 
@@ -103,22 +128,27 @@ Promote to a standalone worker only if sync volume/complexity grows.
 
 ### 3.3 Supabase (app backend)
 
-- **Postgres** holds the mirrored `jobs` table (+ `profiles`, `sync_state`).
+- **Postgres** holds the mirrored `jobs` table + the `job_notes` outbox
+  (+ `profiles`, `sync_state`).
 - **Auth** issues user JWTs (email/password, magic link, or OAuth provider).
-- **RLS** enforces per-user visibility (G4).
-- **Realtime** (optional) pushes live updates to the app when a job row changes.
+- **RLS** enforces per-user visibility (G4) and per-user note insertion (G6).
+- **Realtime** (optional) pushes live updates to the app — both job changes and
+  the status of a note the user submitted (`pending` → `synced`).
 
 ### 3.4 React Native app (Expo)
 
 - `@supabase/supabase-js` for auth + data.
 - Stores the session securely (`expo-secure-store`), not plain AsyncStorage.
-- Read-only views of the user's jobs. (No writes back to Salesforce in the MVP.)
+- Reads the user's jobs; **adds case notes** to those jobs by inserting into the
+  `job_notes` outbox. The app sees its own note immediately (optimistic) and can
+  reflect the sync status surfaced by Realtime.
 
 ---
 
-## 4. Sync strategy (freshness: TBD)
+## 4. Read sync strategy (freshness: TBD)
 
-Decision deferred — design supports both, **start with polling**:
+How job data flows **from Salesforce into Supabase**. (The write-back path is
+§5.4.) Decision deferred — design supports both, **start with polling**:
 
 ### Phase 1 — Scheduled polling (recommended start)
 
@@ -171,6 +201,24 @@ create table public.jobs (
 );
 
 create index on public.jobs (owner_key);
+
+-- Outbox: case notes written by app users, pushed to Salesforce by the sync service
+create table public.job_notes (
+  id              uuid primary key default gen_random_uuid(),  -- also the idempotency key sent to SF
+  job_id          uuid not null references public.jobs(id),
+  author_id       uuid not null references auth.users(id) default auth.uid(),
+  body            text not null,
+  -- write-back state machine
+  status          text not null default 'pending'             -- pending | syncing | synced | error
+                    check (status in ('pending','syncing','synced','error')),
+  salesforce_note_id text,                                     -- set once created in SF
+  attempts        int not null default 0,
+  last_error      text,
+  created_at      timestamptz not null default now(),
+  synced_at       timestamptz
+);
+
+create index on public.job_notes (status) where status in ('pending','error');
 
 -- Sync bookkeeping
 create table public.sync_state (
@@ -228,17 +276,78 @@ using (
 create policy "users read own profile"
 on public.profiles for select to authenticated
 using (id = auth.uid());
+
+-- job_notes: a user may read notes they authored...
+alter table public.job_notes enable row level security;
+
+create policy "users read own notes"
+on public.job_notes for select to authenticated
+using (author_id = auth.uid());
+
+-- ...and may INSERT a note only on a job they own, only as themselves,
+-- and only in the 'pending' state (cannot self-mark as synced).
+create policy "users add notes to their jobs"
+on public.job_notes for insert to authenticated
+with check (
+  author_id = auth.uid()
+  and status = 'pending'
+  and exists (
+    select 1 from public.jobs j
+    join public.profiles p on p.salesforce_owner_key = j.owner_key
+    where j.id = job_notes.job_id and p.id = auth.uid()
+  )
+);
+-- No UPDATE/DELETE policy for authenticated: only the sync service
+-- (service-role) advances status / writes salesforce_note_id.
 ```
 
 Notes:
 
-- The **sync service writes with the service-role key**, which bypasses RLS —
-  so no INSERT/UPDATE policy is granted to `authenticated`. The app is
-  **read-only** against `jobs`.
-- RLS is the entire security boundary for G4. It must be covered by automated
-  tests (try to read another user's job → expect zero rows).
+- The **sync service writes with the service-role key**, which bypasses RLS.
+  For `jobs` the app is **read-only**; for `job_notes` the app may only
+  **insert** `pending` rows on its own jobs — it can never flip status or edit
+  another user's note.
+- RLS is the entire security boundary for G4 **and G6**. It must be covered by
+  automated tests: read another user's job → zero rows; insert a note on a job
+  you don't own → rejected; try to insert with `status='synced'` → rejected.
 - Designed to be tightenable: if scoping later changes to team/region, only the
-  policy's `using (...)` clause changes.
+  `using (...)` / `with check (...)` clauses change.
+
+### 5.4 Write-back path (case notes → Salesforce)
+
+The **outbox pattern**: the app writes to Supabase, and the integration user
+asynchronously pushes to Salesforce. This decouples the client from Salesforce,
+survives flaky connectivity, gives free retry/audit, and keeps the SF secret
+server-side.
+
+```
+1. App INSERTs into job_notes (status='pending')  ──RLS-checked──▶ Supabase
+2. Sync service claims a batch:
+     UPDATE job_notes SET status='syncing', attempts=attempts+1
+     WHERE status='pending' RETURNING *      (FOR UPDATE SKIP LOCKED to avoid double-send)
+3. For each row, create the note in Salesforce as the integration user,
+   stamping the true author (see §6), passing id as an idempotency key.
+4. On success: UPDATE status='synced', salesforce_note_id=<id>, synced_at=now()
+   On failure: UPDATE status='error', last_error=<msg>  (retried with backoff;
+   give up after N attempts and surface to the user)
+```
+
+Design points:
+
+- **Idempotency.** Use the row's `id` (a UUID) as an external/idempotency key
+  on the Salesforce side so a retry after a network blip doesn't create a
+  duplicate note. If the chosen note object can't store an external id, the
+  service must check-before-create.
+- **Notes are append-only.** A case note is *created*, never edited in place by
+  two parties — so there is **no field-merge conflict problem**, unlike
+  bidirectional record sync. This keeps write-back simple.
+- **Trigger cadence.** The same scheduler that runs the read poll can drain the
+  outbox; or drain on-demand via an Edge Function the app calls right after
+  insert for snappier feedback. Realtime on `job_notes` lets the UI show
+  `pending → synced` live.
+- **The created note flows back on the next read sync** if notes are also part
+  of the mirrored data, so the user eventually sees the canonical Salesforce
+  copy.
 
 ---
 
@@ -249,12 +358,24 @@ Notes:
   the app bundle, never in a public repo. The app ships **only** the Supabase
   URL + anon key (safe by design when RLS is correct).
 - **Principle of least privilege** for the integration user in Salesforce:
-  grant read access to the job object and nothing more.
+  grant **read** on the job object and **create** on the note object — nothing
+  more (no broad write/delete).
 - **RLS is mandatory and tested.** The anon key is public; without correct RLS,
-  any user could read all jobs.
+  any user could read all jobs or attach notes to jobs that aren't theirs.
+- **Authorship / attribution (the write-back caveat).** Salesforce will record
+  the *integration user* as the note's creator, because that's who has the API
+  session. To preserve who really wrote it, the sync service must stamp the true
+  author when creating the note — e.g. an "Authored by `<name/external id>` via
+  mobile app" line prepended to the body, and/or a dedicated custom field on the
+  note object holding the app user's identifier. Decide which with the SF team.
+  Be deliberate about *which* identifier is written (avoid leaking unnecessary
+  PII into the note body).
+- **Input validation.** Treat note `body` as untrusted user input: enforce a
+  length cap and strip/escape anything problematic before it reaches Salesforce.
+- **Outbox can't be spoofed.** RLS forces `author_id = auth.uid()` and
+  `status='pending'` on insert, so a user can't forge another user's note or
+  pre-mark one as synced.
 - **Session storage** on device via `expo-secure-store`.
-- **No write-back** to Salesforce in the MVP — removes a large class of authz
-  and conflict problems.
 - **PII minimization** — sync only the job fields the app needs; avoid copying
   sensitive personal fields into Supabase unless required.
 
@@ -262,14 +383,19 @@ Notes:
 
 ## 7. MVP build order (when we proceed)
 
-1. Supabase project: `profiles`, `jobs`, `sync_state` tables + RLS + tests.
+1. Supabase project: `profiles`, `jobs`, `job_notes`, `sync_state` tables + RLS
+   + tests (read scoping **and** note-insert scoping).
 2. Salesforce Connected App + JWT Bearer auth for the integration user.
-3. Sync Edge Function: pull job object → upsert into `jobs` (Phase 1 polling)
-   + `pg_cron` schedule.
+3. Sync Edge Function — **read**: pull job object → upsert into `jobs`
+   (Phase 1 polling) + `pg_cron` schedule.
 4. Decide & implement the user↔owner mapping (§5.2) at signup.
-5. Expo app: Supabase login + "My Jobs" list + job detail, read-only.
-6. (Optional) Supabase Realtime for live list updates.
-7. (Later) CDC/Platform Events push if freshness requires it.
+5. Expo app: Supabase login + "My Jobs" list + job detail (read).
+6. Sync Edge Function — **write**: drain the `job_notes` outbox → create notes
+   in Salesforce with author stamping + idempotency (§5.4, §6).
+7. Expo app: "add case note" UI → insert into `job_notes`, show `pending →
+   synced` status.
+8. (Optional) Supabase Realtime for live job + note-status updates.
+9. (Later) CDC/Platform Events push if read freshness requires it.
 
 ---
 
@@ -283,10 +409,18 @@ Notes:
    `profiles.salesforce_owner_key` gets populated reliably.
 4. **Freshness SLA** — how stale can jobs be? Confirms polling interval vs. need
    for CDC (§4).
-5. **Volume** — how many jobs / users / change rate? Influences Edge Function vs.
-   standalone worker and polling cadence.
-6. **Read-only confirmed?** Any future need for the app to push updates back to
-   Salesforce? (Out of scope for MVP, but affects long-term design.)
+5. **Volume** — how many jobs / users / change rate / note rate? Influences Edge
+   Function vs. standalone worker and polling/drain cadence.
+6. **Which Salesforce object stores a case note?** `ContentNote`, `Task`,
+   Chatter `FeedItem`, `CaseComment`, or a custom object? Determines how we
+   relate it to the job and whether it can hold an idempotency/external id and
+   an author field (§3.1, §5.4, §6).
+7. **How should authorship be represented** on the note in Salesforce — a custom
+   "submitted by" field, a stamped line in the body, or both? (§6)
+8. **Note semantics** — append-only confirmed? Any need to edit/delete a
+   submitted note later? (Edit/delete would reintroduce conflict handling.)
+9. **Beyond notes?** Any other write-backs planned (status changes, field
+   edits)? Those *do* bring field-merge conflicts and would extend this design.
 
 ---
 
@@ -302,6 +436,7 @@ Notes:
 | Live updates (optional) | Supabase Realtime |
 | Salesforce auth | **OAuth 2.0 JWT Bearer** (Connected App, integration user) |
 | Sync compute | **Supabase Edge Function** + `pg_cron` (Phase 1) |
-| Sync trigger | Polling now; CDC/Platform Events later |
+| Read trigger | Polling now; CDC/Platform Events later |
+| Write-back | **Outbox** (`job_notes`) drained by integration user; append-only; idempotent |
 | Secret storage (app) | `expo-secure-store` (Supabase URL + anon key only) |
 | Secret storage (server) | Sync service secret store (SF private key + service-role key) |
