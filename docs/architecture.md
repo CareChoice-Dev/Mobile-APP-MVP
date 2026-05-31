@@ -489,22 +489,26 @@ Design points:
 
 ## 8. Open questions
 
-1. **Which Salesforce object** are jobs? (`Job__c` custom, or `WorkOrder` /
-   `Case` / other standard?) Determines the field list and sync query.
-2. **What field designates the assignee/owner**, and what stable key can map it
-   to an app user (§5.2)? This gates the whole per-user authz model.
+1. ~~Which Salesforce object are jobs?~~ **Resolved (§11):** `sked__Job__c`
+   (Skedulo), with `sked__Job_Allocation__c` as the worker↔job join.
+2. ~~What field designates the assignee/owner?~~ **Resolved (§11):** the worker
+   is `sked__Resource__c`, linked via `sked__Job_Allocation__c` — *not* a field
+   on the Job. Per-user key becomes `profiles.salesforce_resource_id`. Still to
+   confirm: the `sked__Resource__c → User` link field (§11.5).
 3. **How are app users onboarded** — self-signup, admin invite, SSO? Affects how
-   `profiles.salesforce_owner_key` gets populated reliably.
+   `profiles.salesforce_resource_id` gets populated reliably from the worker's
+   `sked__Resource__c`.
 4. **Freshness SLA** — how stale can jobs be? Confirms polling interval vs. need
    for CDC (§4).
 5. **Volume** — how many jobs / users / change rate / note rate? Influences Edge
    Function vs. standalone worker and polling/drain cadence.
-6. **Which Salesforce object stores a case note?** `ContentNote`, `Task`,
-   Chatter `FeedItem`, `CaseComment`, or a custom object? Determines how we
-   relate it to the job and whether it can hold an idempotency/external id and
-   an author field (§3.1, §5.4, §6).
-7. **How should authorship be represented** on the note in Salesforce — a custom
-   "submitted by" field, a stamped line in the body, or both? (§6)
+6. ~~Which object stores a case note?~~ **Resolved (§11):** `enrtcr__Note__c`,
+   linked to Job (`skedhealthcare__Job__c`), Client (`enrtcr__Client__c`), and
+   optionally Medication. No native External Id → idempotency via outbox UUID +
+   check-before-create.
+7. **How should authorship be represented** on the note — `enrtcr__Note__c` has
+   a `Created_by_Name__c` string and `OwnerId`; decide whether to stamp the true
+   worker there and/or in the body (§6).
 8. **Note semantics** — append-only confirmed? Any need to edit/delete a
    submitted note later? (Edit/delete would reintroduce conflict handling.)
 9. **Beyond notes?** Any other write-backs planned (status changes, field
@@ -602,3 +606,94 @@ result. The **governance trade-off** (Trust Layer vs. cost/portability/control)
 is left open for stakeholders; a viable middle path is Agentforce for
 SF-grounded Q&A + actions and a lighter external model for app-local assistance
 over the Supabase copy.
+
+---
+
+## 11. Concrete Salesforce mapping (verified against UAT)
+
+Inspected in the **UAT sandbox** (`CareChoice`, instance `AUS24S`,
+`IsSandbox = true`) — read-only, no personal records queried. This grounds the
+placeholders in §3 / §5 with the org's actual objects. The org runs two managed
+packages: **Skedulo** (`sked__`, `skedhealthcare__`) for scheduling/jobs and a
+care-management package (`enrtcr__`) for clients, notes, and medications.
+
+### 11.1 Object map
+
+| Concept in this doc | Salesforce object | Notes |
+|---|---|---|
+| Job / visit / shift | `sked__Job__c` | 211 fields — mirror only the working set |
+| **Worker ↔ job assignment** | `sked__Job_Allocation__c` | the join that scopes "my jobs" |
+| Worker (field staff) | `sked__Resource__c` | linked to a `User`; the per-user mapping anchor |
+| Client | `Contact` | referenced as `sked__Contact__c` / `enrtcr__Client__c` |
+| Case note | `enrtcr__Note__c` | links to Job, Client, and Medication |
+| Medication chart (standing order) | `enrtcr__Medication__c` | per-client; `Client__c → Contact` |
+| Medication administration (event) | `enrtcr__Medication_Administered__c` | child of Medication; worker on `Person_Administering__c` |
+
+### 11.2 The per-user mapping is resolved (and is NOT on the Job)
+
+The worker is **not** a direct field on `sked__Job__c`. The assignment lives on
+`sked__Job_Allocation__c`:
+
+```
+Supabase user  ──▶  sked__Resource__c (worker)  ──▶  sked__Job_Allocation__c  ──▶  sked__Job__c
+   (profiles.salesforce_resource_id)              sked__Resource__c    sked__Job__c
+```
+
+So §5.2's "owner key" becomes a **Salesforce Resource Id**:
+`profiles.salesforce_resource_id` = the worker's `sked__Resource__c` Id. The
+read sync queries `sked__Job_Allocation__c WHERE sked__Resource__c = :resourceId`
+and mirrors the joined `sked__Job__c`. RLS (§5.3) then scopes jobs by the user's
+`salesforce_resource_id`.
+
+- Worker-facing lifecycle: `sked__Job_Allocation__c.sked__Status__c`
+  = `Pending Dispatch; Dispatched; Confirmed; En Route; Checked In; In Progress; Complete; Declined; Deleted`.
+- Job lifecycle: `sked__Job__c.sked__Job_Status__c`
+  = `Queued; Pending Allocation; … On Site; In Progress; Complete; Cancelled`.
+- Useful upsert key: `sked__Job_Allocation__c.sked__UniqueKey__c` (confirm it's
+  flagged External Id in Setup).
+
+### 11.3 Case note write-back → `enrtcr__Note__c`
+
+Real links (all lookups, so no cascade constraints): `skedhealthcare__Job__c →
+sked__Job__c`, `enrtcr__Client__c → Contact`, optionally `enrtcr__Medication__c
+→ enrtcr__Medication__c`. Relevant fields: `Name` (Title), `enrtcr__Status__c`
+(`Draft; Completed`), `enrtcr__Type__c` (~80 values incl. `Progress notes
+(Support worker)`, `Case Note`, `Medication`), `enrtcr__Service_Note_Date__c`.
+**No native External Id** → use the outbox row UUID as the idempotency key
+(check-before-create, since there's no external-id field to dedupe on).
+
+### 11.4 Medication chart + administration
+
+- **Chart** `enrtcr__Medication__c`: `Client__c → Contact` (no Job link),
+  `Status__c` = `Active; Closed`, `Medication_Support__c` = `Self Administered;
+  Administer; Assistance Needed`, `Dosage__c`, `Route__c`,
+  `Instructions_to_administer_medicines__c`, weekday routine multipicklists
+  (`Monday__c`…`Sunday__c` = `Breakfast; Lunch; Dinner; Bed`), `Start_Date__c`,
+  `End_Date__c`. The "re-validate at administration time" rule (§1A.4, §5.4)
+  means checking `Status__c = Active` and date window before pushing.
+- **Administration** `enrtcr__Medication_Administered__c`: parent
+  `enrtcr__Medication__c` (**required — treat as master-detail**); worker on
+  `Person_Administering__c → sked__Resource__c`; `Administered_Date_Time__c`
+  (**required datetime** — capture on device at the moment, per §5.4);
+  `Administered_Routine__c` = `Breakfast; Lunch; Dinner; Bed`;
+  `Reason_for_not_administering__c` = `R - Refused; A - Absent; F - Fasting; V -
+  Vomiting; L - On Leave; N - Not Available; W - Withheld; M - Missed`;
+  `Comments__c`, `Witness__c`. **No Job FK and no External Id** → relate to the
+  visit via the client + worker + time (or via a related `enrtcr__Note__c`), and
+  synthesize an idempotency key from medication + datetime + routine.
+
+> The `outcome`/`reason` enums in §5.4's `medication_administrations` outbox
+> should mirror `Reason_for_not_administering__c` verbatim so no translation is
+> lost on write-back.
+
+### 11.5 Verify before building
+
+- **Master-detail vs lookup** — the schema API didn't expose relationship type.
+  Treat the three `required=true` refs (`Job_Allocation.sked__Job__c`,
+  `Job_Allocation.sked__Resource__c`, `Medication_Administered.enrtcr__Medication__c`)
+  as probable master-detail and confirm in Setup before finalizing delete
+  semantics.
+- **`sked__Resource__c → User` link** — confirm the field that ties a Resource to
+  a Salesforce User, so onboarding can populate `profiles.salesforce_resource_id`.
+- **External Id flags** — confirm whether `sked__UniqueKey__c` is a true External
+  Id (enables efficient upserts vs. check-before-create).
