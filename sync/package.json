@@ -1,0 +1,21 @@
+{
+  "name": "carechoice-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Integration/sync service + PoC: Salesforce (integration user) <-> Supabase",
+  "type": "module",
+  "scripts": {
+    "poc": "tsx src/poc.ts",
+    "sync:read": "tsx src/syncRead.ts",
+    "drain": "tsx src/drainOutbox.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "jsforce": "^3.3.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "@types/node": "^20.14.0"
+  }
+}
