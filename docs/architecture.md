@@ -513,6 +513,10 @@ Design points:
     allocation, is **Change Data Capture** licensed/enabled, and what are the CDC
     event and concurrent-long-running-request limits? Confirms the §4 cadence is
     safely within budget.
+11. **Agentforce licensing & scoping** (§10) — is Agentforce licensed, what is
+    the consumption/credit budget, and exactly how is each agent invocation
+    constrained to a worker's authorized clients? Governance choice (Trust Layer
+    vs. external model) still open with stakeholders.
 
 ---
 
@@ -534,3 +538,67 @@ Design points:
 | Write-back | **Outbox** drained by integration user; append-only; idempotent |
 | Secret storage (app) | `expo-secure-store` (Supabase URL + anon key only) |
 | Secret storage (server) | Sync service secret store (SF private key + service-role key) |
+| AI assistant | **Agentforce** via Agent API (server-side), grounded in Salesforce + Trust Layer |
+
+---
+
+## 10. AI assistant (Agentforce)
+
+**Goal:** let support workers (a) ask questions grounded in Salesforce data and
+(b) take actions in Salesforce (e.g. draft a case note, log an administration).
+Both are core Agentforce use cases, so the design **leads with Agentforce**.
+
+### 10.1 What Agentforce is
+
+Salesforce's agentic AI platform: an agent grounded in CRM data, with a set of
+permitted **actions** and a reasoning engine that chooses among them. It uses
+LLMs under the hood (Salesforce-hosted or BYO) wrapped in the **Einstein Trust
+Layer** (PII masking, zero data retention with model providers, toxicity
+detection, audit). So this is *"Salesforce orchestrates model + grounding +
+actions"*, not "model vs. no model".
+
+### 10.2 How license-less users access it
+
+Workers have **no Salesforce seats**, so the agent is **not** surfaced via a
+Salesforce UI login. Instead:
+
+```
+worker (app) ──▶ app backend ──▶ Agentforce Agent API ──▶ agent (grounded in SF, Trust Layer)
+                                  (auth via connected app / integration identity)
+             ◀──── response / action result ◀────────────
+```
+
+- Use a **customer/service-facing agent** (designed to serve external users).
+- Invoke it **headlessly via the Agent API** from the server — same trust
+  boundary as the sync service; the secret never reaches the device.
+- Pricing is **consumption-based** (per conversation / Flex credits), which fits
+  the no-per-user-seat model.
+
+### 10.3 The critical constraint — per-user data scoping
+
+The agent runs under a **service/integration identity**, so it does **not**
+inherit Supabase RLS or any per-user Salesforce sharing. Left unconstrained it
+could surface *any* client's data. Therefore **every invocation must be scoped**
+to the worker's authorized clients (pass the worker's scope as
+grounding/parameters; restrict the agent's actions to that scope). This is the
+same authorization principle as §5.3, applied to the AI layer — and it is
+**mandatory**, not optional, for clinical PII.
+
+### 10.4 Agentforce vs. external model (decision: governance still open)
+
+| | **Agentforce** | **External model** (e.g. Claude API in backend) |
+|---|---|---|
+| AI + grounding + actions | Prebuilt, grounded in live SF, action library | You build orchestration + RAG over the Supabase mirror |
+| Per-user scoping | You must enforce it (service identity) | Reuses existing RLS over scoped Supabase data |
+| PII governance | Einstein Trust Layer (masking, zero-retention, audit) | You own the model-provider data contract |
+| Acting in Salesforce | Native actions | Routes back through the outbox / integration user |
+| Cost | Consumption credits; can be less predictable | Per-token; more controllable/portable |
+| Offline/latency | Cloud call; no offline | Same; but you control caching |
+
+**Recommendation:** given both stated goals are Salesforce-centric (read SF +
+act in SF), **Agentforce is the natural fit** — an external model would mean
+rebuilding grounding and routing actions back through the outbox for the same
+result. The **governance trade-off** (Trust Layer vs. cost/portability/control)
+is left open for stakeholders; a viable middle path is Agentforce for
+SF-grounded Q&A + actions and a lighter external model for app-local assistance
+over the Supabase copy.
