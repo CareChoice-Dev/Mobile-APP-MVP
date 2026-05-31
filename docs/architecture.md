@@ -645,6 +645,23 @@ read sync queries `sked__Job_Allocation__c WHERE sked__Resource__c = :resourceId
 and mirrors the joined `sked__Job__c`. RLS (§5.3) then scopes jobs by the user's
 `salesforce_resource_id`.
 
+The worker→User link is **`sked__Resource__c.sked__User__c → User`** (lookup;
+the Resource also has `Resource_Manager__c → User`). Two onboarding options,
+since workers have no app-facing SF login:
+
+- If each worker has a (possibly login-less) `User` whose email matches their
+  app login: app email → `User` → `sked__Resource__c.sked__User__c` → Resource.
+- Otherwise map via an identifying field on the `sked__Resource__c`/`Contact`
+  directly. **Confirm which during onboarding design (OQ #3).**
+
+`sked__Job_Allocation__c` is a **junction**: master-detail to *both*
+`sked__Job__c` and `sked__Resource__c`. Read-only for us, so cascade semantics
+don't affect the mirror. `sked__UniqueKey__c` is `Text(255) Unique
+(case-insensitive)` — a stable natural key, ideal as the **upsert key for
+mirroring allocations into Supabase** (it is *not* flagged External Id in SF, so
+it can't be used for SF-side upserts — irrelevant here since allocations are
+read-only).
+
 - Worker-facing lifecycle: `sked__Job_Allocation__c.sked__Status__c`
   = `Pending Dispatch; Dispatched; Confirmed; En Route; Checked In; In Progress; Complete; Declined; Deleted`.
 - Job lifecycle: `sked__Job__c.sked__Job_Status__c`
@@ -672,7 +689,8 @@ sked__Job__c`, `enrtcr__Client__c → Contact`, optionally `enrtcr__Medication__
   `End_Date__c`. The "re-validate at administration time" rule (§1A.4, §5.4)
   means checking `Status__c = Active` and date window before pushing.
 - **Administration** `enrtcr__Medication_Administered__c`: parent
-  `enrtcr__Medication__c` (**required — treat as master-detail**); worker on
+  `enrtcr__Medication__c` (**confirmed Master-Detail** — admin records cascade
+  with the medication, cannot be reparented); worker on
   `Person_Administering__c → sked__Resource__c`; `Administered_Date_Time__c`
   (**required datetime** — capture on device at the moment, per §5.4);
   `Administered_Routine__c` = `Breakfast; Lunch; Dinner; Bed`;
@@ -686,14 +704,17 @@ sked__Job__c`, `enrtcr__Client__c → Contact`, optionally `enrtcr__Medication__
 > should mirror `Reason_for_not_administering__c` verbatim so no translation is
 > lost on write-back.
 
-### 11.5 Verify before building
+### 11.5 Verified (via FieldDefinition)
 
-- **Master-detail vs lookup** — the schema API didn't expose relationship type.
-  Treat the three `required=true` refs (`Job_Allocation.sked__Job__c`,
-  `Job_Allocation.sked__Resource__c`, `Medication_Administered.enrtcr__Medication__c`)
-  as probable master-detail and confirm in Setup before finalizing delete
-  semantics.
-- **`sked__Resource__c → User` link** — confirm the field that ties a Resource to
-  a Salesforce User, so onboarding can populate `profiles.salesforce_resource_id`.
-- **External Id flags** — confirm whether `sked__UniqueKey__c` is a true External
-  Id (enables efficient upserts vs. check-before-create).
+- **Relationship types — confirmed.** `Job_Allocation.sked__Job__c` =
+  Master-Detail(Job); `Job_Allocation.sked__Resource__c` =
+  Master-Detail(Resource) → the allocation is a **junction**;
+  `Medication_Administered.enrtcr__Medication__c` = Master-Detail(Medication).
+- **Resource→User link — confirmed:** `sked__Resource__c.sked__User__c → User`
+  (plus `Resource_Manager__c → User`).
+- **`sked__UniqueKey__c` — confirmed** `Text(255)` Unique (case-insensitive),
+  **not** an External Id. Use it as the Supabase-side upsert key for allocations.
+
+Still open: whether each worker has a login-less `User` linked via
+`sked__User__c` (drives the onboarding mapping — OQ #3), and the SF API/CDC/
+Agentforce allocations (OQ #10–#11).
