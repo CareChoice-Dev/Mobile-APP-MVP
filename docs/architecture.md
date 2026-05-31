@@ -46,6 +46,42 @@ Salesforce remains invisible to the client; the app only ever sees Supabase.
 
 ---
 
+## 1A. Architecture principles
+
+These hold across every feature (jobs, notes, medications, anything later).
+Whoever builds this should treat them as load-bearing.
+
+1. **Salesforce is the system of record; Supabase is the support worker's system
+   of engagement.** Supabase is a fast, access-controlled, offline-friendly
+   *operational copy* of just the data a worker needs — not a second source of
+   truth.
+
+2. **Mirror only the working set.** Sync only the objects, fields, and rows a
+   worker is allowed to use. Not the whole org. This keeps PII minimal, RLS
+   simple, and sync cheap.
+
+3. **Reads and writes are separate, asymmetric pipes — never one bidirectional
+   sync.** This is what avoids merge conflicts and echo loops.
+
+   | | Read (SF → Supabase) | Write (Supabase → SF) |
+   |---|---|---|
+   | What | Mirror — jobs, med charts | Outbox — notes, administrations |
+   | Nature | Overwrites the local copy | Append-only events |
+   | Truth wins | Salesforce | The worker's recorded action |
+   | Mechanism | Push (CDC) + reconcile poll | Drain a queue, idempotently |
+   | Cadence | Periodic / near-real-time | Eager (push back ASAP) |
+
+4. **The local copy can be stale or wrong.** A write accepted by the app may be
+   rejected by Salesforce later (e.g. a ceased medication). So: re-validate
+   server-side at push time, and never let the UI imply "saved" means "confirmed
+   in Salesforce" until the outbox row flips to `synced`.
+
+5. **Every write is idempotent and attributed.** The integration user performs
+   all writes, so each carries an idempotency key (the row UUID) and stamps the
+   true author. This is tidiness for notes and *safety* for medications.
+
+---
+
 ## 2. High-level architecture
 
 ```
@@ -170,6 +206,58 @@ How job data flows **from Salesforce into Supabase**. (The write-back path is
 > Design both paths to share the **same upsert function**, so adding CDC later
 > is wiring, not a rewrite. Keep a low-frequency reconciliation poll even in
 > Phase 2 to catch missed events.
+
+### 4.1 Recommended cadence (near-real-time within API limits)
+
+The tension "near-real-time vs. Salesforce API limits" mostly **dissolves** once
+you do two things:
+
+- **Query in bulk deltas, not per-record/per-user.** One SOQL
+  `WHERE LastModifiedDate > :lastSync` pulls *all* changed jobs (or meds) for
+  *all* clients in one paginated call — a handful of API calls per cycle,
+  regardless of user count.
+- **Use push for the hot data.** The **Streaming API / CDC / Platform Events**
+  deliver changes over a persistent subscription; they have their own event
+  allocation and do **not** consume the REST request quota the way polling does.
+  This is how you get seconds-level latency *cheaply*.
+
+**Recommended tiered cadence:**
+
+| Data | Volatility | Mechanism | Target latency |
+|------|-----------|-----------|----------------|
+| Jobs | medium | **CDC push** + reconcile poll every ~15 min | seconds |
+| Medication charts | low churn but safety-critical | **CDC push** + reconcile poll every ~5–15 min; **re-validate at administration time** | seconds |
+| Reference/lookup data (rarely changes) | low | poll | hourly / nightly |
+| **Writes** (notes, administrations) | event-driven | **Supabase DB webhook fires the drain on insert**, + fallback drain every ~60 s for retries | seconds |
+| Full reconciliation sweep | — | scheduled | nightly |
+
+**Phased rollout:**
+
+- **MVP (no CDC yet):** delta-poll jobs + meds every **2–5 minutes**, drain the
+  write outbox every **30–60 s** (or event-driven). That alone is "near enough"
+  real-time (≤5 min reads, ~1 min writes) and very cheap.
+- **Near-real-time target:** add **CDC** for jobs + med charts → seconds-level,
+  while keeping the low-frequency reconcile poll as a safety net.
+
+### 4.2 API-limit budget (sanity check)
+
+Salesforce's **Total API Requests / 24 h** is an **org-wide, edition+license-based
+allocation** (commonly tens of thousands+; confirm your org's figure in *Setup →
+System Overview*). With bulk deltas the read cost is tiny:
+
+- Delta-poll every 5 min = 288 cycles/day × ~a-few-calls/cycle ≈ **low thousands
+  of calls/day**.
+- CDC push moves most of that **off** the REST quota entirely (onto the streaming
+  event allocation) — poll cost then drops to just the safety-net reconciles.
+- Writes ≈ 1–2 calls each; even hundreds of administrations/day is negligible.
+- Use the **Bulk API** for the initial backfill / nightly full sweep (separate,
+  much higher limits) rather than the REST API.
+
+> Net: a single integration user doing bulk deltas + CDC sits comfortably inside
+> typical allocations while delivering seconds-level freshness. The thing that
+> *would* blow the budget — naive per-record or per-user polling — is exactly
+> what this design avoids. Verify against your org's actual allocation, the CDC
+> event allocation, and the concurrent-long-running-request limit (§8).
 
 ---
 
@@ -421,6 +509,10 @@ Design points:
    submitted note later? (Edit/delete would reintroduce conflict handling.)
 9. **Beyond notes?** Any other write-backs planned (status changes, field
    edits)? Those *do* bring field-merge conflicts and would extend this design.
+10. **API + streaming allocations** — what is the org's *Total API Requests/24 h*
+    allocation, is **Change Data Capture** licensed/enabled, and what are the CDC
+    event and concurrent-long-running-request limits? Confirms the §4 cadence is
+    safely within budget.
 
 ---
 
@@ -436,7 +528,9 @@ Design points:
 | Live updates (optional) | Supabase Realtime |
 | Salesforce auth | **OAuth 2.0 JWT Bearer** (Connected App, integration user) |
 | Sync compute | **Supabase Edge Function** + `pg_cron` (Phase 1) |
-| Read trigger | Polling now; CDC/Platform Events later |
-| Write-back | **Outbox** (`job_notes`) drained by integration user; append-only; idempotent |
+| Read trigger | MVP: delta-poll **2–5 min**; target: **CDC push** (seconds) + reconcile poll every 15 min |
+| Write trigger | DB-webhook drain on insert + **60 s** fallback |
+| Bulk backfill | **Bulk API** for initial load + nightly sweep |
+| Write-back | **Outbox** drained by integration user; append-only; idempotent |
 | Secret storage (app) | `expo-secure-store` (Supabase URL + anon key only) |
 | Secret storage (server) | Sync service secret store (SF private key + service-role key) |
