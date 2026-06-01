@@ -1,6 +1,7 @@
 // Connection helpers for the integration user (Salesforce) and the service-role
 // Supabase client. Both live ONLY here, server-side. Never shipped to the app.
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import jsforce from 'jsforce';
 import { createClient } from '@supabase/supabase-js';
 
@@ -43,7 +44,6 @@ function buildJwt(): string {
     aud: env.loginUrl,
     exp: Math.floor(Date.now() / 1000) + 180,
   });
-  const crypto = require('node:crypto');
   const sig = crypto
     .createSign('RSA-SHA256')
     .update(`${header}.${claim}`)
