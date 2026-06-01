@@ -46,12 +46,18 @@ export async function drainNotes() {
 
     await db.from('job_notes').update({ status: 'syncing', attempts: (note.attempts ?? 0) + 1 }).eq('id', note.id);
     try {
-      // Idempotency: skip if a note with this outbox stamp already exists.
+      // Idempotency: skip if a note with this outbox stamp already exists. The stamp
+      // lives in enrtcr__Description__c (Long Text Area), which SOQL can't filter on
+      // ("field ... can not be filtered"), so filter by the (filterable) Job lookup
+      // and match the stamp client-side.
       const existing = await conn.query(
-        `SELECT Id FROM ${n.object} WHERE ${n.description} LIKE '%outbox:${note.id}%' LIMIT 1`,
+        `SELECT Id, ${n.description} FROM ${n.object} WHERE ${n.job} = '${job.salesforce_id}' ORDER BY CreatedDate DESC LIMIT 200`,
       );
-      const sfId = existing.totalSize > 0
-        ? (existing.records[0] as any).Id
+      const match = (existing.records as any[]).find(
+        (r) => String(r[n.description] ?? '').includes(`outbox:${note.id}`),
+      );
+      const sfId = match
+        ? (match as any).Id
         : ((await conn.sobject(n.object).create(payload)) as any).id;
 
       await db.from('job_notes')
