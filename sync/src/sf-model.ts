@@ -57,6 +57,21 @@ export const SF = {
     comments: 'Comments__c',
     witness: 'Witness__c',
   },
+  // Org-custom MVP write-back target (NOT the managed enrtcr__Note__c). The
+  // Salesforce Integration user can create these; mirrors the note fields the
+  // drain uses, plus an External Id for idempotent upsert. See salesforce/mdapi/.
+  caseNoteMvp: {
+    object: 'Case_Note_MVP__c',
+    name: 'Name',
+    job: 'Job__c', // → sked__Job__c
+    client: 'Client__c', // → Contact
+    description: 'Description__c',
+    status: 'Status__c', // Draft|Completed
+    type: 'Type__c',
+    serviceNoteDate: 'Service_Note_Date__c',
+    outboxId: 'Mobile_Outbox_Id__c', // External Id (unique) — idempotent upsert key
+    submittedByResource: 'Submitted_By_Resource__c',
+  },
 } as const;
 
 // Map our outbox `outcome` enum to the SF refusal-reason picklist (verbatim).

@@ -7,7 +7,8 @@
   "scripts": {
     "poc": "tsx src/poc.ts",
     "sync:read": "tsx src/syncRead.ts",
-    "drain": "tsx src/drainOutbox.ts"
+    "drain": "tsx src/drainOutbox.ts",
+    "write:test": "tsx src/writeTestCaseNote.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

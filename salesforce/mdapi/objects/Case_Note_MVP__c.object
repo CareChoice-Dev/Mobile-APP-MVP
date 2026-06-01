@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>MVP case-note write-back target for the mobile-app sync. Mirrors the Lumary/Skedulo enrtcr__Note__c fields the drain uses, plus an External Id for idempotent upsert. Exists because the Salesforce Integration license cannot create the managed enrtcr__Note__c, but can write to org-custom objects.</description>
+    <enableActivities>false</enableActivities>
+    <enableHistory>false</enableHistory>
+    <enableReports>true</enableReports>
+    <label>Case Note (MVP)</label>
+    <pluralLabel>Case Notes (MVP)</pluralLabel>
+    <nameField>
+        <label>Case Note Name</label>
+        <type>Text</type>
+    </nameField>
+    <sharingModel>ReadWrite</sharingModel>
+    <fields>
+        <fullName>Job__c</fullName>
+        <label>Job</label>
+        <type>Lookup</type>
+        <referenceTo>sked__Job__c</referenceTo>
+        <relationshipLabel>Case Notes (MVP)</relationshipLabel>
+        <relationshipName>Case_Notes_MVP</relationshipName>
+        <deleteConstraint>SetNull</deleteConstraint>
+        <required>false</required>
+    </fields>
+    <fields>
+        <fullName>Client__c</fullName>
+        <label>Client</label>
+        <type>Lookup</type>
+        <referenceTo>Contact</referenceTo>
+        <relationshipLabel>Case Notes (MVP)</relationshipLabel>
+        <relationshipName>Case_Notes_MVP</relationshipName>
+        <deleteConstraint>SetNull</deleteConstraint>
+        <required>false</required>
+    </fields>
+    <fields>
+        <fullName>Description__c</fullName>
+        <label>Description</label>
+        <type>LongTextArea</type>
+        <length>32768</length>
+        <visibleLines>5</visibleLines>
+    </fields>
+    <fields>
+        <fullName>Status__c</fullName>
+        <label>Status</label>
+        <type>Picklist</type>
+        <valueSet>
+            <valueSetDefinition>
+                <sorted>false</sorted>
+                <value>
+                    <fullName>Draft</fullName>
+                    <default>false</default>
+                    <label>Draft</label>
+                </value>
+                <value>
+                    <fullName>Completed</fullName>
+                    <default>true</default>
+                    <label>Completed</label>
+                </value>
+            </valueSetDefinition>
+        </valueSet>
+    </fields>
+    <fields>
+        <fullName>Type__c</fullName>
+        <label>Type</label>
+        <type>Text</type>
+        <length>255</length>
+    </fields>
+    <fields>
+        <fullName>Service_Note_Date__c</fullName>
+        <label>Service / Note Date</label>
+        <type>Date</type>
+    </fields>
+    <fields>
+        <fullName>Mobile_Outbox_Id__c</fullName>
+        <label>Mobile Outbox Id</label>
+        <type>Text</type>
+        <length>36</length>
+        <externalId>true</externalId>
+        <unique>true</unique>
+        <caseSensitive>false</caseSensitive>
+        <required>false</required>
+    </fields>
+    <fields>
+        <fullName>Submitted_By_Resource__c</fullName>
+        <label>Submitted By (Resource)</label>
+        <type>Text</type>
+        <length>255</length>
+    </fields>
+</CustomObject>
