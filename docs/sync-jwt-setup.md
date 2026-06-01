@@ -57,6 +57,23 @@ won't exist in a fresh clone — re-create it or use the exports above.)
 ## Known state / gotchas
 - **Fixed:** read SOQL relationship was `sked__Job__c__r`; correct is `sked__Job__r`
   (now via `jobRel` in `sf-model.ts`).
+- **Fixed:** `clients.ts` called `require('node:crypto')` inside this ESM package
+  (`"type": "module"`), throwing `require is not defined` and blocking JWT signing.
+  Now imported as ESM at the top of the file. JWT-bearer auth verified against UAT.
+- **BLOCKER (license) — open:** the integration user has the **Salesforce Integration**
+  license + "Minimum Access - API Only Integrations" profile (user `0059p00000SbMvtAAF`).
+  That license **cannot be granted `Contact`/`Account` object read** — inserting an
+  ObjectPermissions row fails with
+  `FIELD_INTEGRITY_EXCEPTION: "user license doesn't allow the permission: Read Contact"`,
+  and no permission set can override a license restriction. The read path needs the client
+  lookups (`sked__Job__c.sked__Contact__c`, `enrtcr__Medication__c.Client__c`) and the drain
+  sets `enrtcr__Note__c.enrtcr__Client__c`, so `Contact` access is mandatory; a lookup to an
+  object the running user can't read surfaces as `INVALID_FIELD` ("No such column"). FLS on
+  those three lookups is already granted on perm set `MVP_Sync_Integration_Access`
+  (`0PS9p000003lptNGAQ`) — only the Contact **object** read is missing, and it's license-blocked.
+  **Fix:** give the integration user (or a different API-only user) a license that permits
+  Contact read (e.g. Salesforce Platform / full Salesforce), then add ObjectPermissions Read
+  on `Contact` to that perm set and re-run. No data has been written to Supabase or UAT.
 - **Gap:** `drainOutbox.ts` drains notes only — no `medication_administrations`
   drainer yet (those rows stay `pending`).
 - **Managed-package access:** if `sked__`/`enrtcr__` reads fail with insufficient
