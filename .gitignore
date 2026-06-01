@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# Repo-wide ignore rules. The security boundary for a public repo: real env
+# files, private keys, and certs must never be committed. Templates
+# (*.env.example) are intentionally tracked and re-included below.
+# ---------------------------------------------------------------------------
+
+# Dependencies
+node_modules/
+
+# Build / export output
+dist/
+build/
+web-build/
+.expo/
+
+# Environment & secrets (anywhere in the tree) — keep only the *.env.example templates
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Keys & certificates (e.g. sync/server.key referenced by sync/.env.example)
+*.key
+*.pem
+*.p12
+*.pfx
+*.cert
+*.crt
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local agent/session data
+.claude/
