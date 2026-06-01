@@ -9,6 +9,7 @@ export const env = {
   clientId: process.env.SF_CLIENT_ID ?? '',
   username: process.env.SF_USERNAME ?? '',
   privateKeyPath: process.env.SF_PRIVATE_KEY_PATH ?? '',
+  privateKey: process.env.SF_PRIVATE_KEY ?? '', // PEM contents (alt to *_PATH, for secret injection)
   password: process.env.SF_PASSWORD ?? '',
   resourceId: process.env.SF_RESOURCE_ID ?? 'a2sI80000000HFPIA2',
   supabaseUrl: process.env.SUPABASE_URL ?? '',
@@ -19,7 +20,7 @@ export const env = {
 // Connect as the integration user. Prefers JWT Bearer; falls back to
 // username/password+token for a quick PoC.
 export async function sfConnect(): Promise<jsforce.Connection> {
-  if (env.clientId && env.privateKeyPath) {
+  if (env.clientId && (env.privateKey || env.privateKeyPath)) {
     const conn = new jsforce.Connection({ loginUrl: env.loginUrl });
     await conn.authorize({
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
@@ -34,8 +35,8 @@ export async function sfConnect(): Promise<jsforce.Connection> {
 
 function buildJwt(): string {
   // Minimal JWT Bearer assertion. In production use a vetted JWT lib.
-  const key = fs.readFileSync(env.privateKeyPath, 'utf8');
-  const header = b64({ alg: 'RS256' });
+  const key = env.privateKey || fs.readFileSync(env.privateKeyPath, 'utf8');
+  const header = b64({ alg: 'RS256', typ: 'JWT' });
   const claim = b64({
     iss: env.clientId,
     sub: env.username,
