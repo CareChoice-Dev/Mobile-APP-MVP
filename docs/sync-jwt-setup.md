@@ -60,24 +60,32 @@ won't exist in a fresh clone — re-create it or use the exports above.)
 - **Fixed:** `clients.ts` called `require('node:crypto')` inside this ESM package
   (`"type": "module"`), throwing `require is not defined` and blocking JWT signing.
   Now imported as ESM at the top of the file. JWT-bearer auth verified against UAT.
-- **BLOCKER (license) — open:** the integration user has the **Salesforce Integration**
-  license + "Minimum Access - API Only Integrations" profile (user `0059p00000SbMvtAAF`).
-  That license **cannot be granted `Contact`/`Account` object read** — inserting an
-  ObjectPermissions row fails with
-  `FIELD_INTEGRITY_EXCEPTION: "user license doesn't allow the permission: Read Contact"`,
-  and no permission set can override a license restriction. The read path needs the client
-  lookups (`sked__Job__c.sked__Contact__c`, `enrtcr__Medication__c.Client__c`) and the drain
-  sets `enrtcr__Note__c.enrtcr__Client__c`, so `Contact` access is mandatory; a lookup to an
-  object the running user can't read surfaces as `INVALID_FIELD` ("No such column"). FLS on
-  those three lookups is already granted on perm set `MVP_Sync_Integration_Access`
-  (`0PS9p000003lptNGAQ`) — only the Contact **object** read is missing, and it's license-blocked.
-  **Fix:** give the integration user (or a different API-only user) a license that permits
-  Contact read (e.g. Salesforce Platform / full Salesforce), then add ObjectPermissions Read
-  on `Contact` to that perm set and re-run. No data has been written to Supabase or UAT.
+- **Fixed:** `drainOutbox.ts` idempotency check filtered `enrtcr__Description__c`
+  (a Long Text Area) with `LIKE`, which SOQL rejects (`field ... can not be filtered
+  in a query call`), failing every drain. Now filters by the (filterable) Job lookup
+  and matches the `outbox:` stamp client-side. Verified: re-matches already-drained
+  notes instead of duplicating.
+- **RESOLVED (read path):** the integration user (Salesforce Integration license,
+  "Minimum Access - API Only Integrations", `0059p00000SbMvtAAF`) needed `Contact`
+  **object** read for the client lookups. The fix was **not** the base license/profile:
+  assign the **Salesforce API Integration permission-set license** (PSL,
+  `0PLI800000000MxOAI`, 4 free seats) to the user, then grant `Contact` Read on
+  `MVP_Sync_Integration_Access` (`0PS9p000003lptNGAQ`). FLS on the three client lookups
+  was already present. After that the read sync runs clean (53 jobs + 45 meds upserted).
+  (Without the PSL, ObjectPermissions Read on a standard object fails with
+  `FIELD_INTEGRITY_EXCEPTION: "user license doesn't allow the permission: Read Contact"`.)
+- **BLOCKER (license) — note write-back open:** the same Integration-license user
+  **cannot create `enrtcr__Note__c`** — `create` returns `entity type cannot be inserted:
+  Case Note` and its describe shows `createable=false` *even though* the perm set grants
+  `PermissionsCreate=true`. This is **not** a package-license gap: `enrtcr`/`sked`/
+  `skedhealthcare` are unlimited site licenses (`AllowedLicenses=-1`) and the user already
+  reads them. The object *is* API-createable (the existing drained note proves a prior
+  drain succeeded — as a more-privileged identity via the username/password fallback). The
+  Salesforce Integration license caps writes to this managed object. **Fix:** run the drain
+  (write path) as a **full Salesforce-license** user, or keep note write-back off the
+  integration user. (Reads can stay on the integration user.)
 - **Gap:** `drainOutbox.ts` drains notes only — no `medication_administrations`
   drainer yet (those rows stay `pending`).
-- **Managed-package access:** if `sked__`/`enrtcr__` reads fail with insufficient
-  access, the integration user may also need the package's permission-set license.
 - **Cleanup pending in UAT:** test note `a0x9p000002Xru1AAC` (kept, "Safe to delete")
   and the older `a0x9p000002XGhZAAW` (a delete was blocked by the safety classifier).
 - **Auth errors:** `user hasn't approved this consumer` → pre-authorization/profile
