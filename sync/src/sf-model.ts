@@ -8,7 +8,8 @@ export const SF = {
   jobAllocation: {
     object: 'sked__Job_Allocation__c',
     resource: 'sked__Resource__c', // Master-Detail(Resource) — the worker
-    job: 'sked__Job__c', // Master-Detail(Job)
+    job: 'sked__Job__c', // Master-Detail(Job) lookup field
+    jobRel: 'sked__Job__r', // relationship name for SOQL traversal (NOT `${job}__r`)
     status: 'sked__Status__c', // Pending Dispatch|Dispatched|Confirmed|En Route|Checked In|In Progress|Complete|Declined|Deleted
     uniqueKey: 'sked__UniqueKey__c', // stable natural key (unique, not External Id)
   },
@@ -38,7 +39,8 @@ export const SF = {
     name: 'Name', // Title
     status: 'enrtcr__Status__c', // Draft|Completed
     type: 'enrtcr__Type__c', // e.g. "Case Note", "Progress notes (Support worker)"
-    job: 'skedhealthcare__Job__c', // → sked__Job__c
+    job: 'skedhealthcare__Job__c', // → sked__Job__c (lookup field)
+    jobRel: 'skedhealthcare__Job__r', // relationship name for SOQL traversal
     client: 'enrtcr__Client__c', // → Contact
     description: 'enrtcr__Description__c', // body (Long Text 32768)
     serviceNoteDate: 'enrtcr__Service_Note_Date__c',

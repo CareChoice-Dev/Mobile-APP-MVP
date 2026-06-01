@@ -58,7 +58,7 @@ async function main() {
 
   // 4 — READ BACK
   const back = await conn.query(
-    `SELECT Id, ${n.name}, ${n.status}, ${n.job}__r.${SF.job.name}, ${n.description} ` +
+    `SELECT Id, ${n.name}, ${n.status}, ${n.jobRel}.${SF.job.name}, ${n.description} ` +
       `FROM ${n.object} WHERE Id = '${created.id}'`,
   );
   console.log(`4) Read back:`, JSON.stringify(back.records[0], null, 2));

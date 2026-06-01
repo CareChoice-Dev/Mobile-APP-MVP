@@ -9,22 +9,22 @@ export async function fetchJobsForResource(conn: jsforce.Connection, resourceId:
   const a = SF.jobAllocation;
   const j = SF.job;
   const soql =
-    `SELECT ${a.job}, ${a.job}__r.${j.name}, ${a.job}__r.${j.status}, ` +
-    `${a.job}__r.${j.type}, ${a.job}__r.${j.start}, ${a.job}__r.${j.finish}, ` +
-    `${a.job}__r.${j.contact}, ${a.status} ` +
+    `SELECT ${a.job}, ${a.jobRel}.${j.name}, ${a.jobRel}.${j.status}, ` +
+    `${a.jobRel}.${j.type}, ${a.jobRel}.${j.start}, ${a.jobRel}.${j.finish}, ` +
+    `${a.jobRel}.${j.contact}, ${a.status} ` +
     `FROM ${a.object} ` +
     `WHERE ${a.resource} = '${resourceId}' AND ${a.status} != 'Deleted' ` +
-    `AND ${a.job}__r.${j.contact} != null ` +
-    `ORDER BY ${a.job}__r.${j.start} DESC LIMIT 200`;
+    `AND ${a.jobRel}.${j.contact} != null ` +
+    `ORDER BY ${a.jobRel}.${j.start} DESC LIMIT 200`;
   const res = await conn.query(soql);
   return res.records.map((r: any) => ({
     salesforce_id: r[a.job],
-    job_number: r[`${a.job}__r`]?.[j.name],
-    status: r[`${a.job}__r`]?.[j.status],
-    job_type: r[`${a.job}__r`]?.[j.type],
-    starts_at: r[`${a.job}__r`]?.[j.start],
-    ends_at: r[`${a.job}__r`]?.[j.finish],
-    client_sf_id: r[`${a.job}__r`]?.[j.contact],
+    job_number: r[a.jobRel]?.[j.name],
+    status: r[a.jobRel]?.[j.status],
+    job_type: r[a.jobRel]?.[j.type],
+    starts_at: r[a.jobRel]?.[j.start],
+    ends_at: r[a.jobRel]?.[j.finish],
+    client_sf_id: r[a.jobRel]?.[j.contact],
     resource_id: resourceId,
     allocation_status: r[a.status],
     synced_at: new Date().toISOString(),
