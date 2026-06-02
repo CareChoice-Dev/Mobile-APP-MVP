@@ -1,6 +1,7 @@
 // READ PATH: pull a worker's jobs + their clients' medication charts from
 // Salesforce (as the integration user) and upsert into Supabase.
 // Uses the exact SOQL proven against UAT in docs/architecture.md §11.
+import { pathToFileURL } from 'node:url';
 import type jsforce from 'jsforce';
 import { SF } from './sf-model.js';
 import { sfConnect, supabaseAdmin, env } from './clients.js';
@@ -72,7 +73,7 @@ export async function syncRead(resourceId = env.resourceId) {
   return { jobs, meds };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   syncRead().catch((e) => {
     console.error(e);
     process.exit(1);

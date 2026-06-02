@@ -2,6 +2,7 @@
 // Salesforce as the integration user. Append-only + idempotent (check-before-
 // create on the body stamp, since the current org has no External Id field;
 // the new org should add Mobile_Outbox_Id__c (External Id) for a clean upsert).
+import { pathToFileURL } from 'node:url';
 import type jsforce from 'jsforce';
 import { SF } from './sf-model.js';
 import { sfConnect, supabaseAdmin, env } from './clients.js';
@@ -71,7 +72,7 @@ export async function drainNotes() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   drainNotes().catch((e) => {
     console.error(e);
     process.exit(1);
