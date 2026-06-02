@@ -16,6 +16,11 @@ drain can upsert idempotently instead of scanning the note body.
   integration user (no license, so assignable to the Salesforce Integration user).
 
 ## Deploy to **UAT** (needs an admin with "Customize Application")
+
+> ✅ **Deployed 2026-06-02** to `carechoice-uat` (org `00D9p00000B60rpEAB`, AUS24S) — deploy
+> `0Af9p00000XI9LBCA1`, 10/10 components. `Case Note MVP Access` assigned to the integration
+> user; `npm run write:test` created `aCO9p0000000hhhGAA`. Steps below are the re-deploy runbook.
+
 The JWT integration user can't deploy metadata, so deploy as an admin.
 
 **sf CLI:**
@@ -43,6 +48,7 @@ is at the zip root) → workbench.developerforce.com → **migration → Deploy*
    It links the note to an already-synced job + its client, upserts by
    `Mobile_Outbox_Id__c` (idempotent — safe to re-run), and prints only record Ids.
 
-## Follow-up (not done yet)
-- Point `drainOutbox.ts` at `Case_Note_MVP__c` (model already added as `SF.caseNoteMvp`
-  in `sync/src/sf-model.ts`) and switch the idempotency check to an External-Id upsert.
+## Follow-up
+- ✅ **Done 2026-06-02** — `drainOutbox.ts` now targets `Case_Note_MVP__c` (`SF.caseNoteMvp`)
+  and upserts by the `Mobile_Outbox_Id__c` External Id (no more body-stamp scan).
+  Still to verify against a real pending `job_notes` row (outbox was empty at hand-off).

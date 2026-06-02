@@ -16,13 +16,16 @@ fresh session doesn't re-derive context. Companion docs: `architecture.md` (desi
 | JWT-bearer auth → UAT | ✅ Works (instance `carechoice--uat.sandbox.my.salesforce.com`) |
 | Read sync (SF → Supabase) | ✅ Live — **53 jobs + 45 medications** upserted, keyed by `salesforce_id` |
 | Contact access for integration user | ✅ Granted (see §3) — required for the client lookups |
-| Note drain (Supabase → SF) | ⛔ Blocked on the **managed** `enrtcr__Note__c` (license can't create it) |
-| Workaround: `Case_Note_MVP__c` | 🟡 Authored as deployable metadata — **needs an admin to deploy** |
+| Note drain (Supabase → SF) | ✅ Repointed to **`Case_Note_MVP__c`** via External-Id upsert on `Mobile_Outbox_Id__c` |
+| Workaround: `Case_Note_MVP__c` | ✅ **Deployed to UAT** + `Case Note MVP Access` perm set assigned to the integration user; write-back proven |
 
-**Net:** the read path is done and proven. The write-back path is blocked only because the
-Salesforce **Integration license cannot create the managed `enrtcr__Note__c`** (Case Note)
-object (`createable=false`, even with object/FLS perms granted). The fix in progress is an
-org-custom `Case_Note_MVP__c` object the integration user *can* write to.
+**Net (updated 2026-06-02, local session):** read path proven, and write-back is now **unblocked**.
+The org-custom `Case_Note_MVP__c` is deployed to UAT, the `Case Note MVP Access` perm set is
+assigned to the integration user, and `npm run write:test` confirmed the Salesforce-Integration
+user can create a record there (the managed `enrtcr__Note__c` had `createable=false`).
+`drainOutbox.ts` now upserts notes into `Case_Note_MVP__c` keyed on the `Mobile_Outbox_Id__c`
+External Id (the Supabase note id), replacing the old body-stamp scan. Not yet exercised against a
+live `job_notes` row (outbox empty at hand-off).
 
 ### Commits delivered this session (on the branch)
 - `fix(sync)`: `node:crypto` imported as ESM (was `require()` in an ESM pkg → blocked JWT signing)
@@ -102,6 +105,11 @@ No special network policy needed locally — just internet to `*.salesforce.com`
 
 ## 5. Finish the write-back (`Case_Note_MVP__c`)
 
+> ✅ **DONE 2026-06-02** — deployed to UAT (`carechoice-uat`, org `00D9p00000B60rpEAB`) via
+> `sf project deploy start`; `Case Note MVP Access` assigned to the integration user;
+> `npm run write:test` created record `aCO9p0000000hhhGAA`; `drainOutbox.ts` repointed.
+> The steps below are kept as the runbook for a fresh org / re-deploy.
+
 The object + fields + permission set are authored at `salesforce/mdapi/` (see
 `salesforce/README.md`). Deploying it needs an admin with `ModifyMetadata` (the integration
 user is intentionally too restricted — see §6). Locally:
@@ -141,8 +149,9 @@ After deploy:
 
 ## 7. Backlog / next steps
 
-1. Deploy `Case_Note_MVP__c`, assign perms, run `npm run write:test` (§5).
-2. Repoint `drainOutbox.ts` → `Case_Note_MVP__c` via External-Id upsert.
+1. ✅ **Done 2026-06-02** — `Case_Note_MVP__c` deployed to UAT, perms assigned, `npm run write:test` passed.
+2. ✅ **Done 2026-06-02** — `drainOutbox.ts` repointed to `Case_Note_MVP__c` via External-Id upsert
+   (verify next session against a real pending `job_notes` row — outbox was empty here).
 3. Add a `medication_administrations` drainer (not built; those rows stay `pending`).
 4. **Scheduling (read path):** Phase 1 = delta-poll every 2–5 min via Supabase Edge Function +
    `pg_cron`; Phase 2 = Salesforce **CDC / Platform Events → webhook** (seconds-level), keeping a

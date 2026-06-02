@@ -49,7 +49,7 @@ export SUPABASE_URL=https://xgkvdnaciymazdxxxoxu.supabase.co
 export SF_PRIVATE_KEY_PATH=./server.key
 DRY_RUN=1 npm run sync:read    # prove JWT auth + read (no writes)
 DRY_RUN=0 npm run sync:read    # upsert jobs + meds
-DRY_RUN=0 npm run drain        # push pending job_notes -> enrtcr__Note__c
+DRY_RUN=0 npm run drain        # push pending job_notes -> Case_Note_MVP__c (External-Id upsert)
 ```
 (`sync/.env` already holds the non-secret values too, but it's gitignored so it
 won't exist in a fresh clone — re-create it or use the exports above.)
@@ -74,16 +74,14 @@ won't exist in a fresh clone — re-create it or use the exports above.)
   was already present. After that the read sync runs clean (53 jobs + 45 meds upserted).
   (Without the PSL, ObjectPermissions Read on a standard object fails with
   `FIELD_INTEGRITY_EXCEPTION: "user license doesn't allow the permission: Read Contact"`.)
-- **BLOCKER (license) — note write-back open:** the same Integration-license user
-  **cannot create `enrtcr__Note__c`** — `create` returns `entity type cannot be inserted:
-  Case Note` and its describe shows `createable=false` *even though* the perm set grants
-  `PermissionsCreate=true`. This is **not** a package-license gap: `enrtcr`/`sked`/
-  `skedhealthcare` are unlimited site licenses (`AllowedLicenses=-1`) and the user already
-  reads them. The object *is* API-createable (the existing drained note proves a prior
-  drain succeeded — as a more-privileged identity via the username/password fallback). The
-  Salesforce Integration license caps writes to this managed object. **Fix:** run the drain
-  (write path) as a **full Salesforce-license** user, or keep note write-back off the
-  integration user. (Reads can stay on the integration user.)
+- **RESOLVED (2026-06-02) — note write-back via org-custom object:** the Integration-license
+  user still **cannot create the managed `enrtcr__Note__c`** (`createable=false`, even with
+  `PermissionsCreate=true` — the license caps writes to that managed object). Fix shipped: an
+  **org-custom `Case_Note_MVP__c`** object (the Integration license *can* create org-custom
+  objects) was deployed to UAT, the `Case Note MVP Access` perm set assigned to the integration
+  user, and `npm run write:test` confirmed a create as that user (record `aCO9p0000000hhhGAA`).
+  `drainOutbox.ts` now upserts into `Case_Note_MVP__c` by the `Mobile_Outbox_Id__c` External Id.
+  No full-license / username-password identity needed for the write path anymore.
 - **Gap:** `drainOutbox.ts` drains notes only — no `medication_administrations`
   drainer yet (those rows stay `pending`).
 - **Cleanup pending in UAT:** test note `a0x9p000002Xru1AAC` (kept, "Safe to delete")

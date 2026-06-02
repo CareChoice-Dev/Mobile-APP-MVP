@@ -1,18 +1,17 @@
-// WRITE PATH: drain the job_notes outbox and create enrtcr__Note__c records in
-// Salesforce as the integration user. Append-only + idempotent (check-before-
-// create on the body stamp, since the current org has no External Id field;
-// the new org should add Mobile_Outbox_Id__c (External Id) for a clean upsert).
+// WRITE PATH: drain the job_notes outbox into Case_Note_MVP__c (org-custom) in
+// Salesforce as the integration user. Idempotent via an External-Id upsert on
+// Mobile_Outbox_Id__c (the Supabase note id) — insert if new, update if already
+// drained. Targets the org-custom object because the Salesforce Integration
+// license cannot create the managed enrtcr__Note__c (see salesforce/README.md).
 import { pathToFileURL } from 'node:url';
 import type jsforce from 'jsforce';
 import { SF } from './sf-model.js';
 import { sfConnect, supabaseAdmin, env } from './clients.js';
 
-const STAMP = (outboxId: string, resourceId: string) =>
-  `[Submitted via mobile app by Resource ${resourceId} | outbox:${outboxId}]`;
-
 export async function drainNotes() {
   const db = supabaseAdmin();
   const conn = await sfConnect();
+  const n = SF.caseNoteMvp;
 
   // 1. Claim a batch of pending notes (join to job for the SF job id + resource).
   const { data: notes, error } = await db
@@ -28,8 +27,6 @@ export async function drainNotes() {
 
   for (const note of notes as any[]) {
     const job = note.jobs;
-    const stamp = STAMP(note.id, job.resource_id);
-    const n = SF.note;
     const payload = {
       [n.name]: `Mobile note — ${job.salesforce_id}`,
       [n.status]: 'Completed',
@@ -37,34 +34,28 @@ export async function drainNotes() {
       [n.job]: job.salesforce_id,
       [n.client]: job.client_sf_id,
       [n.serviceNoteDate]: new Date().toISOString().slice(0, 10),
-      [n.description]: `${stamp}\n\n${note.body}`,
+      [n.description]: note.body,
+      [n.submittedByResource]: job.resource_id,
+      [n.outboxId]: note.id, // Supabase note id → External Id (stable; idempotent upsert key)
     };
 
     if (env.dryRun) {
-      console.log(`[dry-run] would create ${n.object}:`, payload);
+      console.log(`[dry-run] would upsert ${n.object} by ${n.outboxId}=${note.id}:`, payload);
       continue;
     }
 
     await db.from('job_notes').update({ status: 'syncing', attempts: (note.attempts ?? 0) + 1 }).eq('id', note.id);
     try {
-      // Idempotency: skip if a note with this outbox stamp already exists. The stamp
-      // lives in enrtcr__Description__c (Long Text Area), which SOQL can't filter on
-      // ("field ... can not be filtered"), so filter by the (filterable) Job lookup
-      // and match the stamp client-side.
-      const existing = await conn.query(
-        `SELECT Id, ${n.description} FROM ${n.object} WHERE ${n.job} = '${job.salesforce_id}' ORDER BY CreatedDate DESC LIMIT 200`,
-      );
-      const match = (existing.records as any[]).find(
-        (r) => String(r[n.description] ?? '').includes(`outbox:${note.id}`),
-      );
-      const sfId = match
-        ? (match as any).Id
-        : ((await conn.sobject(n.object).create(payload)) as any).id;
+      // Idempotent External-Id upsert on Mobile_Outbox_Id__c: insert if new, update if
+      // this note was already drained. Replaces the old body-stamp scan (the managed
+      // enrtcr__Note__c had no External Id; this org-custom object does).
+      const res: any = await conn.sobject(n.object).upsert(payload, n.outboxId);
+      const sfId = res?.id ?? res?.Id;
 
       await db.from('job_notes')
         .update({ status: 'synced', salesforce_note_id: sfId, synced_at: new Date().toISOString() })
         .eq('id', note.id);
-      console.log(`Note ${note.id} -> ${n.object} ${sfId}`);
+      console.log(`Note ${note.id} -> ${n.object} ${sfId} (created=${res?.created})`);
     } catch (e: any) {
       await db.from('job_notes').update({ status: 'error', last_error: String(e?.message ?? e) }).eq('id', note.id);
       console.error(`Note ${note.id} failed:`, e?.message ?? e);
