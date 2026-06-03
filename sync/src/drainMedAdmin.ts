@@ -45,7 +45,74 @@ export function buildMedAdminPayload(row: MedAdminRow): Record<string, unknown> 
 }
 
 export async function drainMedAdmins(): Promise<void> {
-  throw new Error('not implemented yet');
+  const db = supabaseAdmin();
+  const conn = await sfConnect();
+
+  // 1. Claim a batch of pending administrations + the SF ids they need.
+  const { data: rows, error } = await db
+    .from('medication_administrations')
+    .select(
+      'id, outcome, routine, dose_given, administered_at, comments, witness, attempts, job_id, administered_by, ' +
+        'medications!inner(salesforce_id, client_sf_id), jobs(salesforce_id, resource_id)',
+    )
+    .eq('status', 'pending')
+    .limit(50);
+  if (error) throw error;
+  if (!rows?.length) {
+    console.log('No pending administrations.');
+    return;
+  }
+
+  // 2. Resolve the Resource id: prefer the linked job's resource_id; otherwise the
+  //    author's profile (administered_by -> profiles.salesforce_resource_id). The FK
+  //    points at auth.users, so the profile lookup is a separate batched query.
+  const needProfile = (rows as any[]).filter((r) => !r.jobs?.resource_id).map((r) => r.administered_by);
+  const profileResource = new Map<string, string>();
+  if (needProfile.length) {
+    const { data: profs, error: pe } = await db
+      .from('profiles')
+      .select('id, salesforce_resource_id')
+      .in('id', [...new Set(needProfile)]);
+    if (pe) throw pe;
+    for (const p of (profs ?? []) as any[]) profileResource.set(p.id, p.salesforce_resource_id);
+  }
+
+  for (const r of rows as any[]) {
+    const med = r.medications;
+    const payload = buildMedAdminPayload({
+      id: r.id,
+      outcome: r.outcome,
+      routine: r.routine,
+      dose_given: r.dose_given,
+      administered_at: r.administered_at,
+      comments: r.comments,
+      witness: r.witness,
+      medication_sf_id: med.salesforce_id,
+      client_sf_id: med.client_sf_id ?? null,
+      job_sf_id: r.jobs?.salesforce_id ?? null,
+      resource_id: r.jobs?.resource_id ?? profileResource.get(r.administered_by) ?? null,
+    });
+
+    if (env.dryRun) {
+      console.log(`[dry-run] would upsert ${n.object} by ${n.outboxId}=${r.id}:`, payload);
+      continue;
+    }
+
+    await db.from('medication_administrations').update({ status: 'syncing', attempts: (r.attempts ?? 0) + 1 }).eq('id', r.id);
+    try {
+      // Idempotent External-Id upsert on Mobile_Outbox_Id__c: insert if new, update if
+      // already drained — no duplicate administrations.
+      const res: any = await conn.sobject(n.object).upsert(payload, n.outboxId);
+      const sfId = res?.id ?? res?.Id;
+      await db.from('medication_administrations')
+        .update({ status: 'synced', salesforce_id: sfId, synced_at: new Date().toISOString() })
+        .eq('id', r.id);
+      console.log(`Admin ${r.id} -> ${n.object} ${sfId} (created=${res?.created})`);
+    } catch (e: any) {
+      await db.from('medication_administrations').update({ status: 'error', last_error: String(e?.message ?? e) }).eq('id', r.id);
+      console.error(`Admin ${r.id} failed:`, e?.message ?? e);
+    }
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
