@@ -72,6 +72,25 @@ export const SF = {
     outboxId: 'Mobile_Outbox_Id__c', // External Id (unique) — idempotent upsert key
     submittedByResource: 'Submitted_By_Resource__c',
   },
+  // Org-custom MVP write-back target for medication administrations (NOT the
+  // managed enrtcr__Medication_Administered__c, which the Integration license
+  // cannot create). Mirrors the managed shape + an External Id for idempotent upsert.
+  medAdminMvp: {
+    object: 'Med_Admin_MVP__c',
+    name: 'Name',
+    medication: 'Medication__c', // → enrtcr__Medication__c (Lookup)
+    client: 'Client__c', // → Contact
+    job: 'Job__c', // → sked__Job__c
+    administered: 'Administered__c', // checkbox; true when outcome === 'given'
+    reasonNotAdministered: 'Reason_Not_Administered__c', // REASON_BY_OUTCOME value
+    administeredAt: 'Administered_At__c', // required datetime
+    routine: 'Routine__c', // Breakfast|Lunch|Dinner|Bed
+    doseGiven: 'Dose_Given__c',
+    comments: 'Comments__c',
+    witness: 'Witness__c',
+    submittedByResource: 'Submitted_By_Resource__c',
+    outboxId: 'Mobile_Outbox_Id__c', // External Id (unique) — idempotent upsert key
+  },
 } as const;
 
 // Map our outbox `outcome` enum to the SF refusal-reason picklist (verbatim).
