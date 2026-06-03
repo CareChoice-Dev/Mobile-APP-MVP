@@ -16,10 +16,16 @@ export function readSfEnv(): SfEnv {
   };
 }
 
+const SF_API_VERSION = 'v64.0';
+
 const b64urlFromString = (s: string) =>
   btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const b64urlFromBytes = (buf: ArrayBuffer) =>
-  btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64urlFromBytes = (buf: ArrayBuffer) => {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
 
 // Pure: the signing input `header.claim` (base64url), testable without crypto.
 export function buildJwtParts(env: SfEnv, nowSec: number): string {
@@ -52,6 +58,7 @@ async function signRs256(unsigned: string, pkcs8Pem: string): Promise<string> {
 export interface SfToken { access_token: string; instance_url: string; }
 
 export async function sfToken(env: SfEnv, nowSec: number): Promise<SfToken> {
+  if (nowSec > 1e12) throw new Error('sfToken: nowSec must be Unix seconds, not milliseconds');
   const unsigned = buildJwtParts(env, nowSec);
   const assertion = `${unsigned}.${await signRs256(unsigned, env.privateKeyPkcs8Pem)}`;
   const res = await fetch(`${env.loginUrl}/services/oauth2/token`, {
@@ -64,9 +71,12 @@ export async function sfToken(env: SfEnv, nowSec: number): Promise<SfToken> {
 }
 
 export async function sfQuery<T = Record<string, unknown>>(token: SfToken, soql: string): Promise<T[]> {
-  const url = `${token.instance_url}/services/data/v64.0/query?q=${encodeURIComponent(soql)}`;
+  const url = `${token.instance_url}/services/data/${SF_API_VERSION}/query?q=${encodeURIComponent(soql)}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token.access_token}` } });
   if (!res.ok) throw new Error(`SF query failed: ${res.status} ${await res.text()}`);
   const body = await res.json();
+  if (body.done === false) {
+    throw new Error(`sfQuery: result truncated (totalSize=${body.totalSize}); pagination not implemented`);
+  }
   return body.records as T[];
 }

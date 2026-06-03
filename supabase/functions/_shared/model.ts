@@ -2,10 +2,15 @@
 // + pure helpers for the webhook: re-fetch SOQL and row→table mapping.
 export type Entity = 'sked__Job_Allocation__c' | 'sked__Job__c' | 'enrtcr__Medication__c';
 
+// Salesforce record ids are exactly 15 or 18 alphanumeric chars. Validate before
+// interpolating into SOQL (defense-in-depth against injection via the webhook payload).
+const SF_ID_RE = /^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$/;
+
 const JOB_FIELDS =
   'sked__Job__c, sked__Status__c, LastModifiedDate, ' +
   'sked__Job__r.Name, sked__Job__r.sked__Job_Status__c, sked__Job__r.sked__Type__c, ' +
-  'sked__Job__r.sked__Start__c, sked__Job__r.sked__Finish__c, sked__Job__r.sked__Contact__c';
+  'sked__Job__r.sked__Start__c, sked__Job__r.sked__Finish__c, sked__Job__r.sked__Contact__c, ' +
+  'sked__Job__r.LastModifiedDate';
 
 const MED_FIELDS =
   'Id, Client__c, Name, Dosage__c, Route__c, Medication_Support__c, Status__c, ' +
@@ -14,6 +19,8 @@ const MED_FIELDS =
 // Pure: SOQL to re-fetch the canonical record(s) for a change event, scoped to one resource.
 // (Note: includes Deleted allocations so the handler can detect soft-deletes; null = skip.)
 export function buildRefetchSoql(entity: Entity, recordId: string, resourceId: string): string | null {
+  if (!SF_ID_RE.test(recordId)) throw new Error(`Invalid Salesforce id: ${recordId}`);
+  if (!SF_ID_RE.test(resourceId)) throw new Error(`Invalid Salesforce id (resource): ${resourceId}`);
   switch (entity) {
     case 'sked__Job_Allocation__c':
       return `SELECT Id, ${JOB_FIELDS} FROM sked__Job_Allocation__c ` +
@@ -31,6 +38,10 @@ export function buildRefetchSoql(entity: Entity, recordId: string, resourceId: s
 // deno-lint-ignore no-explicit-any
 export function mapAllocationToJob(r: any, resourceId: string) {
   const j = r.sked__Job__r ?? {};
+  // The jobs row mirrors job + allocation; track the latest change of either.
+  // SF ISO timestamps share format/zone, so lexical max == chronological max.
+  const mods = [r.LastModifiedDate, j.LastModifiedDate].filter(Boolean) as string[];
+  const salesforce_modified_at = mods.length ? mods.sort().at(-1)! : null;
   return {
     salesforce_id: r.sked__Job__c,
     job_number: j.Name,
@@ -41,7 +52,7 @@ export function mapAllocationToJob(r: any, resourceId: string) {
     client_sf_id: j.sked__Contact__c,
     resource_id: resourceId,
     allocation_status: r.sked__Status__c,
-    salesforce_modified_at: r.LastModifiedDate ?? null,
+    salesforce_modified_at,
     synced_at: new Date().toISOString(),
   };
 }
