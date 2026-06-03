@@ -27,6 +27,12 @@ export interface MedAdminRow {
 // Optional fields are left `undefined` so jsforce omits them from the request.
 export function buildMedAdminPayload(row: MedAdminRow): Record<string, unknown> {
   const given = row.outcome === 'given';
+  // Defense-in-depth vs enum drift: every valid outcome (incl. 'given' → null) is a
+  // key in REASON_BY_OUTCOME. An unmapped outcome must fail loudly, never write a
+  // misleading "not administered, no reason" record.
+  if (!(row.outcome in REASON_BY_OUTCOME)) {
+    throw new Error(`Unknown medication outcome "${row.outcome}" (not in REASON_BY_OUTCOME)`);
+  }
   return {
     [n.name]: `Med admin — ${row.medication_sf_id}`,
     [n.medication]: row.medication_sf_id,
@@ -79,19 +85,33 @@ export async function drainMedAdmins(): Promise<void> {
 
   for (const r of rows as any[]) {
     const med = r.medications;
-    const payload = buildMedAdminPayload({
-      id: r.id,
-      outcome: r.outcome,
-      routine: r.routine,
-      dose_given: r.dose_given,
-      administered_at: r.administered_at,
-      comments: r.comments,
-      witness: r.witness,
-      medication_sf_id: med.salesforce_id,
-      client_sf_id: med.client_sf_id ?? null,
-      job_sf_id: r.jobs?.salesforce_id ?? null,
-      resource_id: r.jobs?.resource_id ?? profileResource.get(r.administered_by) ?? null,
-    });
+    let payload: Record<string, unknown>;
+    try {
+      payload = buildMedAdminPayload({
+        id: r.id,
+        outcome: r.outcome,
+        routine: r.routine,
+        dose_given: r.dose_given,
+        administered_at: r.administered_at,
+        comments: r.comments,
+        witness: r.witness,
+        medication_sf_id: med.salesforce_id,
+        client_sf_id: med.client_sf_id ?? null,
+        job_sf_id: r.jobs?.salesforce_id ?? null,
+        // If neither the linked job nor the author's profile resolves, the Resource is
+        // omitted from the SF record (Submitted_By_Resource__c left blank).
+        resource_id: r.jobs?.resource_id ?? profileResource.get(r.administered_by) ?? null,
+      });
+    } catch (e: any) {
+      // e.g. an outcome not in REASON_BY_OUTCOME — isolate this row, keep the batch going.
+      if (env.dryRun) {
+        console.error(`[dry-run] ${r.id} would fail: ${e?.message ?? e}`);
+        continue;
+      }
+      await db.from('medication_administrations').update({ status: 'error', last_error: String(e?.message ?? e) }).eq('id', r.id);
+      console.error(`Admin ${r.id} payload error:`, e?.message ?? e);
+      continue;
+    }
 
     if (env.dryRun) {
       console.log(`[dry-run] would upsert ${n.object} by ${n.outboxId}=${r.id}:`, payload);

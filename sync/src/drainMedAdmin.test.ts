@@ -23,6 +23,7 @@ test('given → Administered__c true, reason null, key fields mapped', () => {
   assert.equal(p.Medication__c, 'a0xMED000000001');
   assert.equal(p.Administered_At__c, '2026-06-02T08:00:00.000Z');
   assert.equal(p.Submitted_By_Resource__c, 'a2sI80000000UtHIAU');
+  assert.equal(p.Name, 'Med admin — a0xMED000000001');
 });
 
 test('refused → Administered__c false, mapped reason', () => {
@@ -41,7 +42,11 @@ test('every non-given outcome maps to a non-empty reason', () => {
 
 test('null optional fields are omitted (undefined), not sent as null', () => {
   const p = buildMedAdminPayload({ ...base, outcome: 'given', client_sf_id: null, job_sf_id: null, routine: null, dose_given: null, comments: null, witness: null, resource_id: null });
-  assert.equal('Client__c' in p && p.Client__c === undefined, true);
+  assert.equal(p.Client__c, undefined);
   assert.equal(p.Job__c, undefined);
   assert.equal(p.Routine__c, undefined);
+});
+
+test('unknown outcome throws (defense-in-depth vs enum drift)', () => {
+  assert.throws(() => buildMedAdminPayload({ ...base, outcome: 'teleported' }), /Unknown medication outcome/);
 });
