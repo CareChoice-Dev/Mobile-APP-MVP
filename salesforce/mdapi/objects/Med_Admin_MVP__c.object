@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>MVP medication-administration write-back target for the mobile-app sync. Mirrors the managed enrtcr__Medication_Administered__c fields the drain uses, plus an External Id for idempotent upsert. Exists because the Salesforce Integration license cannot create the managed enrtcr__Medication_Administered__c, but can write to org-custom objects.</description>
+    <enableActivities>false</enableActivities>
+    <enableHistory>false</enableHistory>
+    <enableReports>true</enableReports>
+    <label>Med Admin (MVP)</label>
+    <pluralLabel>Med Admins (MVP)</pluralLabel>
+    <nameField>
+        <label>Med Admin Name</label>
+        <type>Text</type>
+    </nameField>
+    <sharingModel>ReadWrite</sharingModel>
+    <fields>
+        <fullName>Medication__c</fullName>
+        <label>Medication</label>
+        <type>Lookup</type>
+        <referenceTo>enrtcr__Medication__c</referenceTo>
+        <relationshipLabel>Med Admins (MVP)</relationshipLabel>
+        <relationshipName>Med_Admins_MVP</relationshipName>
+        <deleteConstraint>SetNull</deleteConstraint>
+        <required>false</required>
+    </fields>
+    <fields>
+        <fullName>Client__c</fullName>
+        <label>Client</label>
+        <type>Lookup</type>
+        <referenceTo>Contact</referenceTo>
+        <relationshipLabel>Med Admins (MVP)</relationshipLabel>
+        <relationshipName>Med_Admins_MVP</relationshipName>
+        <deleteConstraint>SetNull</deleteConstraint>
+        <required>false</required>
+    </fields>
+    <fields>
+        <fullName>Job__c</fullName>
+        <label>Job</label>
+        <type>Lookup</type>
+        <referenceTo>sked__Job__c</referenceTo>
+        <relationshipLabel>Med Admins (MVP)</relationshipLabel>
+        <relationshipName>Med_Admins_MVP</relationshipName>
+        <deleteConstraint>SetNull</deleteConstraint>
+        <required>false</required>
+    </fields>
+    <fields>
+        <fullName>Administered__c</fullName>
+        <label>Administered</label>
+        <type>Checkbox</type>
+        <defaultValue>false</defaultValue>
+    </fields>
+    <fields>
+        <fullName>Reason_Not_Administered__c</fullName>
+        <label>Reason Not Administered</label>
+        <type>Picklist</type>
+        <valueSet>
+            <valueSetDefinition>
+                <sorted>false</sorted>
+                <value><fullName>R - Refused</fullName><default>false</default><label>R - Refused</label></value>
+                <value><fullName>A - Absent</fullName><default>false</default><label>A - Absent</label></value>
+                <value><fullName>F - Fasting</fullName><default>false</default><label>F - Fasting</label></value>
+                <value><fullName>V - Vomiting</fullName><default>false</default><label>V - Vomiting</label></value>
+                <value><fullName>L - On Leave</fullName><default>false</default><label>L - On Leave</label></value>
+                <value><fullName>N - Not Available</fullName><default>false</default><label>N - Not Available</label></value>
+                <value><fullName>W - Withheld</fullName><default>false</default><label>W - Withheld</label></value>
+                <value><fullName>M - Missed</fullName><default>false</default><label>M - Missed</label></value>
+            </valueSetDefinition>
+        </valueSet>
+    </fields>
+    <fields>
+        <fullName>Administered_At__c</fullName>
+        <label>Administered At</label>
+        <type>DateTime</type>
+        <required>true</required>
+    </fields>
+    <fields>
+        <fullName>Routine__c</fullName>
+        <label>Routine</label>
+        <type>Picklist</type>
+        <valueSet>
+            <valueSetDefinition>
+                <sorted>false</sorted>
+                <value><fullName>Breakfast</fullName><default>false</default><label>Breakfast</label></value>
+                <value><fullName>Lunch</fullName><default>false</default><label>Lunch</label></value>
+                <value><fullName>Dinner</fullName><default>false</default><label>Dinner</label></value>
+                <value><fullName>Bed</fullName><default>false</default><label>Bed</label></value>
+            </valueSetDefinition>
+        </valueSet>
+    </fields>
+    <fields>
+        <fullName>Dose_Given__c</fullName>
+        <label>Dose Given</label>
+        <type>Text</type>
+        <length>255</length>
+    </fields>
+    <fields>
+        <fullName>Comments__c</fullName>
+        <label>Comments</label>
+        <type>LongTextArea</type>
+        <length>32768</length>
+        <visibleLines>5</visibleLines>
+    </fields>
+    <fields>
+        <fullName>Witness__c</fullName>
+        <label>Witness</label>
+        <type>Text</type>
+        <length>255</length>
+    </fields>
+    <fields>
+        <fullName>Submitted_By_Resource__c</fullName>
+        <label>Submitted By (Resource)</label>
+        <type>Text</type>
+        <length>255</length>
+    </fields>
+    <fields>
+        <fullName>Mobile_Outbox_Id__c</fullName>
+        <label>Mobile Outbox Id</label>
+        <type>Text</type>
+        <length>36</length>
+        <externalId>true</externalId>
+        <unique>true</unique>
+        <caseSensitive>false</caseSensitive>
+        <required>false</required>
+    </fields>
+</CustomObject>
