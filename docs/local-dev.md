@@ -155,11 +155,21 @@ After deploy:
 3. ✅ **Done 2026-06-02** — `medication_administrations` drainer (`npm run drain:meds`) upserts into
    org-custom `Med_Admin_MVP__c` by `Mobile_Outbox_Id__c`; deployed to UAT + verified e2e (incl.
    idempotency). Datetime normalized to ISO ms+Z for Salesforce; unknown outcomes fail loudly.
-4. **Scheduling (read path):** Phase 1 = delta-poll every 2–5 min via Supabase Edge Function +
-   `pg_cron`; Phase 2 = Salesforce **CDC / Platform Events → webhook** (seconds-level), keeping a
-   reconcile poll. Both share the same upsert fn — see `architecture.md` §4. (Confirm CDC is
-   licensed/enabled in the org.)
-5. Optional: Supabase Realtime for live job/note-status updates in the app.
+4. **Read-path automation (decomposed into SP1/SP2/SP3).** Decision: instant reads via
+   Salesforce push (not CDC — CDC needs a host Supabase can't provide), notes write-back stays a
+   5-min batch. Specs/plans under `docs/superpowers/`.
+   - **SP1 — instant read (code built 2026-06-02, deploy pending):** Salesforce record-triggered
+     Flows push create/update/delete → Supabase `sf-webhook` Edge Function
+     (`supabase/functions/sf-webhook`) → re-fetch + upsert/delete `jobs`/`medications` by
+     `salesforce_id`. Shared Deno SF client at `supabase/functions/_shared/` (8 unit tests pass).
+     Admin setup: `docs/salesforce-flows-setup.md`. Remaining: deploy the function + set secrets
+     (`supabase` CLI, user login), admin builds the Flows, then e2e. Full instant UX also needs
+     app-side Supabase Realtime (item 5).
+   - **SP2 — 5-min write drain (todo):** port `drainOutbox`/`drainMedAdmin` to an Edge Function + `pg_cron`.
+   - **SP3 — reconcile safety net (todo):** periodic `syncRead` Edge Function + `pg_cron` to heal
+     missed callouts (incl. allocation hard-deletes).
+5. Optional: Supabase Realtime for live job/note-status updates in the app (needed for SP1's
+   end-to-end "user sees it instantly" UX).
 
 ---
 
