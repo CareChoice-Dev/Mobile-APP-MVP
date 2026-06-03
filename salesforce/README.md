@@ -52,3 +52,12 @@ is at the zip root) → workbench.developerforce.com → **migration → Deploy*
 - ✅ **Done 2026-06-02** — `drainOutbox.ts` now targets `Case_Note_MVP__c` (`SF.caseNoteMvp`)
   and upserts by the `Mobile_Outbox_Id__c` External Id (no more body-stamp scan).
   Still to verify against a real pending `job_notes` row (outbox was empty at hand-off).
+
+## Med_Admin_MVP__c (medication administrations)
+Same pattern as `Case_Note_MVP__c`: org-custom write-back target (the Integration license can't
+create the managed `enrtcr__Medication_Administered__c`), with a `Mobile_Outbox_Id__c` External Id
+and the managed-shape outcome model (`Administered__c` + `Reason_Not_Administered__c`). Deployed to
+UAT 2026-06-02; `Med_Admin_MVP_Access` assigned to the integration user; drained by
+`sync/src/drainMedAdmin.ts` (`npm run drain:meds`). Verified e2e incl. idempotency. Note:
+`administered_at` is normalized to ISO ms+Z (Salesforce rejects Postgres microsecond timestamptz),
+and an outcome not in `REASON_BY_OUTCOME` fails the row loudly rather than writing a blank reason.

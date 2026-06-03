@@ -152,7 +152,9 @@ After deploy:
 1. ✅ **Done 2026-06-02** — `Case_Note_MVP__c` deployed to UAT, perms assigned, `npm run write:test` passed.
 2. ✅ **Done 2026-06-02** — `drainOutbox.ts` repointed to `Case_Note_MVP__c` via External-Id upsert
    (verify next session against a real pending `job_notes` row — outbox was empty here).
-3. Add a `medication_administrations` drainer (not built; those rows stay `pending`).
+3. ✅ **Done 2026-06-02** — `medication_administrations` drainer (`npm run drain:meds`) upserts into
+   org-custom `Med_Admin_MVP__c` by `Mobile_Outbox_Id__c`; deployed to UAT + verified e2e (incl.
+   idempotency). Datetime normalized to ISO ms+Z for Salesforce; unknown outcomes fail loudly.
 4. **Scheduling (read path):** Phase 1 = delta-poll every 2–5 min via Supabase Edge Function +
    `pg_cron`; Phase 2 = Salesforce **CDC / Platform Events → webhook** (seconds-level), keeping a
    reconcile poll. Both share the same upsert fn — see `architecture.md` §4. (Confirm CDC is
