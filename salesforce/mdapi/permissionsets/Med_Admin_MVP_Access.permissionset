@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Med Admin MVP Access</label>
+    <description>Create/Read/Edit on Med_Admin_MVP__c + FLS, for the mobile-app sync integration user. No license (custom object) so it is assignable to the Salesforce Integration user.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <objectPermissions>
+        <object>Med_Admin_MVP__c</object>
+        <allowCreate>true</allowCreate>
+        <allowRead>true</allowRead>
+        <allowEdit>true</allowEdit>
+        <allowDelete>false</allowDelete>
+        <viewAllRecords>true</viewAllRecords>
+        <modifyAllRecords>false</modifyAllRecords>
+    </objectPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Medication__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Client__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Job__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Administered__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Reason_Not_Administered__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Routine__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Dose_Given__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Comments__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Witness__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Submitted_By_Resource__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Med_Admin_MVP__c.Mobile_Outbox_Id__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+</PermissionSet>
