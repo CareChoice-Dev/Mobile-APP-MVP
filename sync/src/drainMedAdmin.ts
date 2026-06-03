@@ -40,7 +40,8 @@ export function buildMedAdminPayload(row: MedAdminRow): Record<string, unknown> 
     [n.job]: row.job_sf_id ?? undefined,
     [n.administered]: given,
     [n.reasonNotAdministered]: given ? null : (REASON_BY_OUTCOME[row.outcome] ?? null),
-    [n.administeredAt]: row.administered_at,
+    // Normalize Postgres timestamptz (micros + ±hh:mm) to SF-acceptable ISO (ms + Z).
+    [n.administeredAt]: new Date(row.administered_at).toISOString(),
     [n.routine]: row.routine ?? undefined,
     [n.doseGiven]: row.dose_given ?? undefined,
     [n.comments]: row.comments ?? undefined,

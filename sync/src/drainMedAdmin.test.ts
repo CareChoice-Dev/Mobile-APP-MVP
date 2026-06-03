@@ -50,3 +50,8 @@ test('null optional fields are omitted (undefined), not sent as null', () => {
 test('unknown outcome throws (defense-in-depth vs enum drift)', () => {
   assert.throws(() => buildMedAdminPayload({ ...base, outcome: 'teleported' }), /Unknown medication outcome/);
 });
+
+test('administered_at is normalized to SF-acceptable ISO (ms + Z), not raw Postgres timestamptz', () => {
+  const p = buildMedAdminPayload({ ...base, outcome: 'given', administered_at: '2026-06-01T04:21:21.157324+00:00' });
+  assert.equal(p.Administered_At__c, '2026-06-01T04:21:21.157Z');
+});
