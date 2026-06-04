@@ -158,13 +158,18 @@ After deploy:
 4. **Read-path automation (decomposed into SP1/SP2/SP3).** Decision: instant reads via
    Salesforce push (not CDC — CDC needs a host Supabase can't provide), notes write-back stays a
    5-min batch. Specs/plans under `docs/superpowers/`.
-   - **SP1 — instant read (code built 2026-06-02, deploy pending):** Salesforce record-triggered
+   - **SP1 — instant read (backend live + verified 2026-06-04):** Salesforce record-triggered
      Flows push create/update/delete → Supabase `sf-webhook` Edge Function
      (`supabase/functions/sf-webhook`) → re-fetch + upsert/delete `jobs`/`medications` by
      `salesforce_id`. Shared Deno SF client at `supabase/functions/_shared/` (8 unit tests pass).
-     Admin setup: `docs/salesforce-flows-setup.md`. Remaining: deploy the function + set secrets
-     (`supabase` CLI, user login), admin builds the Flows, then e2e. Full instant UX also needs
-     app-side Supabase Realtime (item 5).
+     ✅ Function **deployed** to project `xgkvdnaciymazdxxxoxu` (`--no-verify-jwt`, shared-secret gate);
+     secrets set in the Supabase dashboard; webhook **verified e2e via curl** — job upsert
+     (idempotent, `salesforce_modified_at` populated, DB-confirmed) + medication upsert.
+     ⏳ **Remaining: an admin builds the record-triggered Flows + Named Credential** per
+     `docs/salesforce-flows-setup.md` (so real SF changes auto-fire the webhook), then the
+     real-data e2e. Full instant UX also needs app-side Supabase Realtime (item 5). NOTE: secrets
+     are paste-sensitive — `SF_CLIENT_ID`/`SF_USERNAME`/`SF_RESOURCE_ID` each needed a re-paste to
+     strip truncation/whitespace; the SOQL-id guard caught a leading tab in `SF_RESOURCE_ID`.
    - **SP2 — 5-min write drain (todo):** port `drainOutbox`/`drainMedAdmin` to an Edge Function + `pg_cron`.
    - **SP3 — reconcile safety net (todo):** periodic `syncRead` Edge Function + `pg_cron` to heal
      missed callouts (incl. allocation hard-deletes).
