@@ -43,3 +43,6 @@ Thumbs.db
 
 # Local agent/session data
 .claude/
+
+# Supabase CLI local cache
+supabase/.temp/
